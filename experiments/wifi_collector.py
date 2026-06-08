@@ -343,7 +343,7 @@ def main() -> int:
         readable_ssid = ssid if args.store_ssid else None
 
         freq = get_frequency(packet)
-        channel = get_channel_from_elements(packet) or channel_from_frequency(freq)
+        channel =  channel_from_frequency(freq) or get_channel_from_elements(packet)
         band = band_from_channel_or_frequency(channel, freq)
         rssi = get_signal_dbm(packet)
         encryption = get_encryption(packet)
