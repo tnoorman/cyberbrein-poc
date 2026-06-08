@@ -2,12 +2,15 @@
 import argparse
 import hashlib
 import hmac
+import json
 import os
 import secrets
+import socket
 import sqlite3
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
@@ -166,6 +169,143 @@ def get_signal_dbm(packet) -> Optional[int]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# GPS support
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class GpsFix:
+    received_monotonic: float
+    timestamp_utc: str
+    latitude: float
+    longitude: float
+    mode: int
+    horizontal_accuracy_m: Optional[float]
+
+
+class CachedGpsdProvider:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 2947,
+        socket_timeout_seconds: float = 5.0,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.socket_timeout_seconds = socket_timeout_seconds
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._latest_fix: Optional[GpsFix] = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def get_fix(self, max_age_seconds: float) -> Optional[GpsFix]:
+        with self._lock:
+            fix = self._latest_fix
+        if fix is None:
+            return None
+        age_seconds = time.monotonic() - fix.received_monotonic
+        if age_seconds > max_age_seconds:
+            return None
+        return fix
+
+    def wait_for_fix(self, timeout_seconds: float) -> Optional[GpsFix]:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            fix = self.get_fix(max_age_seconds=timeout_seconds)
+            if fix is not None:
+                return fix
+            time.sleep(0.2)
+        return None
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self._read_from_gpsd()
+            except OSError as error:
+                print(f"GPSD connection error: {error}")
+                time.sleep(2)
+            except Exception as error:
+                print(f"GPSD read error: {error}")
+                time.sleep(2)
+
+    def _read_from_gpsd(self) -> None:
+        with socket.create_connection(
+            (self.host, self.port),
+            timeout=self.socket_timeout_seconds,
+        ) as sock:
+            sock.settimeout(self.socket_timeout_seconds)
+            watch_command = '?WATCH={"enable":true,"json":true}\n'
+            sock.sendall(watch_command.encode("ascii"))
+            buffer = ""
+            while not self._stop_event.is_set():
+                chunk = sock.recv(4096).decode("utf-8", errors="replace")
+                if not chunk:
+                    continue
+                buffer += chunk
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    self._handle_gpsd_line(line.strip())
+
+    def _handle_gpsd_line(self, line: str) -> None:
+        if not line:
+            return
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if message.get("class") != "TPV":
+            return
+        mode = int(message.get("mode", 0))
+        # mode 2 = 2D fix, mode 3 = 3D fix
+        if mode < 2:
+            return
+        lat = message.get("lat")
+        lon = message.get("lon")
+        if lat is None or lon is None:
+            return
+        eph = message.get("eph")
+        horizontal_accuracy_m = float(eph) if eph is not None else None
+        fix = GpsFix(
+            received_monotonic=time.monotonic(),
+            timestamp_utc=datetime.now(timezone.utc).isoformat(),
+            latitude=float(lat),
+            longitude=float(lon),
+            mode=mode,
+            horizontal_accuracy_m=horizontal_accuracy_m,
+        )
+        with self._lock:
+            self._latest_fix = fix
+
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
+
+def ensure_column(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_definition: str,
+) -> None:
+    existing_columns = {
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in existing_columns:
+        conn.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
+        )
+
+
 def create_database(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -196,9 +336,14 @@ def create_database(db_path: str) -> sqlite3.Connection:
             latitude REAL,
             longitude REAL,
             gps_accuracy_m REAL,
+            gps_mode INTEGER,
+            gps_fix_age_s REAL,
             FOREIGN KEY(scan_run_id) REFERENCES scan_runs(id)
         )
     """)
+
+    ensure_column(conn, "wifi_observations", "gps_mode", "INTEGER")
+    ensure_column(conn, "wifi_observations", "gps_fix_age_s", "REAL")
 
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_wifi_observations_run
@@ -243,9 +388,11 @@ def insert_observation(
             encryption,
             latitude,
             longitude,
-            gps_accuracy_m
+            gps_accuracy_m,
+            gps_mode,
+            gps_fix_age_s
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (scan_run_id, *row))
 
 
@@ -289,6 +436,10 @@ def main() -> int:
     parser.add_argument("--store-ssid", action="store_true", help="Store readable SSID. Use only in approved tests.")
     parser.add_argument("--no-hop", action="store_true", help="Disable channel hopping.")
     parser.add_argument("--note", default=None, help="Optional note for this scan run.")
+    parser.add_argument("--gpsd", action="store_true", help="Use live GPS fixes from gpsd.")
+    parser.add_argument("--require-gps-fix", action="store_true", help="Abort when no GPS fix is available before scanning.")
+    parser.add_argument("--gps-wait", type=float, default=60.0, help="Seconds to wait for the first GPS fix.")
+    parser.add_argument("--gps-max-age", type=float, default=5.0, help="Maximum age in seconds for a GPS fix attached to a Wi-Fi observation.")
     args = parser.parse_args()
 
     secret = os.environ.get("WIFI_SCAN_SECRET")
@@ -316,8 +467,28 @@ def main() -> int:
         "observations": 0,
         "beacons": 0,
         "probe_responses": 0,
-        "skipped": 0
+        "skipped": 0,
+        "gps_attached": 0,
+        "gps_missing": 0,
     }
+
+    gps_provider = None
+    if args.gpsd:
+        gps_provider = CachedGpsdProvider()
+        gps_provider.start()
+        print("Waiting for GPS fix from gpsd...")
+        first_fix = gps_provider.wait_for_fix(timeout_seconds=args.gps_wait)
+        if first_fix is None and args.require_gps_fix:
+            print("No GPS fix available. Aborting because --require-gps-fix is enabled.")
+            gps_provider.stop()
+            return 2
+        if first_fix is None:
+            print("No GPS fix available yet. Scan will continue and store NULL coordinates until a fix is available.")
+        else:
+            print(
+                "GPS fix available: "
+                f"lat={first_fix.latitude}, lon={first_fix.longitude}, mode={first_fix.mode}"
+            )
 
     seen_commit_count = 0
 
@@ -343,13 +514,33 @@ def main() -> int:
         readable_ssid = ssid if args.store_ssid else None
 
         freq = get_frequency(packet)
-        channel =  channel_from_frequency(freq) or get_channel_from_elements(packet)
+        # Frequency from Radiotap is the channel the adapter actually received on.
+        # This is more reliable than the channel element inside the Wi-Fi frame.
+        channel = channel_from_frequency(freq) or get_channel_from_elements(packet)
         band = band_from_channel_or_frequency(channel, freq)
         rssi = get_signal_dbm(packet)
         encryption = get_encryption(packet)
         frame_type = "BEACON" if is_beacon else "PROBE_RESPONSE"
 
         bssid_hash = hmac_hash(bssid, secret)
+
+        latitude = args.lat
+        longitude = args.lon
+        gps_accuracy_m = args.gps_accuracy
+        gps_mode = None
+        gps_fix_age_s = None
+
+        if gps_provider:
+            gps_fix = gps_provider.get_fix(max_age_seconds=args.gps_max_age)
+            if gps_fix:
+                latitude = gps_fix.latitude
+                longitude = gps_fix.longitude
+                gps_accuracy_m = gps_fix.horizontal_accuracy_m
+                gps_mode = gps_fix.mode
+                gps_fix_age_s = round(time.monotonic() - gps_fix.received_monotonic, 3)
+                counters["gps_attached"] += 1
+            else:
+                counters["gps_missing"] += 1
 
         row = (
             utc_now(),
@@ -362,9 +553,11 @@ def main() -> int:
             freq,
             band,
             encryption,
-            args.lat,
-            args.lon,
-            args.gps_accuracy
+            latitude,
+            longitude,
+            gps_accuracy_m,
+            gps_mode,
+            gps_fix_age_s,
         )
 
         insert_observation(conn, scan_run_id, row)
@@ -395,6 +588,9 @@ def main() -> int:
         if hopper_thread:
             hopper_thread.join(timeout=2)
 
+        if gps_provider:
+            gps_provider.stop()
+
         conn.commit()
 
         summary = conn.execute("""
@@ -420,6 +616,8 @@ def main() -> int:
         print(f"Beacons: {counters['beacons']}")
         print(f"Probe responses: {counters['probe_responses']}")
         print(f"Skipped: {counters['skipped']}")
+        print(f"GPS attached: {counters['gps_attached']}")
+        print(f"GPS missing: {counters['gps_missing']}")
         print("")
         print("Distinct networks by encryption:")
         for encryption, count in by_encryption:
