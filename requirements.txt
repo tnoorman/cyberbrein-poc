@@ -1,7 +1,6 @@
 scapy
 pandas
 geopandas
-shapely
 pyproj
 sqlalchemy
 psycopg2-binary
