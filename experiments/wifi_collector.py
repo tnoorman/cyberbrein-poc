@@ -522,7 +522,8 @@ def main() -> int:
         encryption = get_encryption(packet)
         frame_type = "BEACON" if is_beacon else "PROBE_RESPONSE"
 
-        bssid_hash = hmac_hash(bssid, secret)
+        #bssid_hash = hmac_hash(bssid, secret)
+        bssid_hash = bssid
 
         latitude = args.lat
         longitude = args.lon
