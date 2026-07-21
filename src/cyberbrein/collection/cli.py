@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from cyberbrein.collection.channel_hopper import ChannelHopper
 from cyberbrein.collection.collector import CollectionError, CollectorService
-from cyberbrein.collection.gpsd_client import GpsdClient
+from cyberbrein.collection.gpsd_client import CachedGpsFixProvider, GpsdClient
 from cyberbrein.collection.sqlite_writer import SQLiteObservationWriter
 
 
@@ -76,6 +76,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="GPSD connection/read timeout in seconds.",
     )
     parser.add_argument(
+        "--gps-max-age",
+        type=float,
+        default=5.0,
+        help="Maximum cached GPS-fix age in seconds (default: 5).",
+    )
+    parser.add_argument(
+        "--gps-wait",
+        type=float,
+        default=30.0,
+        help="Maximum startup wait for a required GPS fix (default: 30).",
+    )
+    parser.add_argument(
         "--require-gps-fix",
         action="store_true",
         help="Store only observations with a valid live 3D GPS fix.",
@@ -92,6 +104,10 @@ def _validate_arguments(parser: argparse.ArgumentParser, args: argparse.Namespac
         parser.error("--gpsd-port must be between 1 and 65535")
     if args.gpsd_timeout <= 0:
         parser.error("--gpsd-timeout must be positive")
+    if args.gps_max_age <= 0:
+        parser.error("--gps-max-age must be positive")
+    if args.gps_wait < 0:
+        parser.error("--gps-wait must not be negative")
 
 
 def _sniff(**kwargs: object) -> object:
@@ -107,11 +123,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     use_gpsd = args.gpsd or args.require_gps_fix
-    gpsd_client = (
-        GpsdClient(
-            host=args.gpsd_host,
-            port=args.gpsd_port,
-            timeout_seconds=args.gpsd_timeout,
+    gpsd_provider = (
+        CachedGpsFixProvider(
+            GpsdClient(
+                host=args.gpsd_host,
+                port=args.gpsd_port,
+                timeout_seconds=args.gpsd_timeout,
+            ),
+            max_age_seconds=args.gps_max_age,
         )
         if use_gpsd
         else None
@@ -125,11 +144,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     try:
+        if gpsd_provider is not None:
+            gpsd_provider.start()
+            if args.require_gps_fix and gpsd_provider.wait_for_fix(args.gps_wait) is None:
+                raise CollectionError("gps_fix_unavailable")
         writer = SQLiteObservationWriter(args.database_path)
         service = CollectorService(
             measurement_round_id=args.measurement_round_id,
             writer=writer,
-            gpsd_client=gpsd_client,
+            gpsd_client=gpsd_provider,
             channel_hopper=hopper,
             require_gps_fix=args.require_gps_fix,
         )
@@ -142,6 +165,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         category = error.category if isinstance(error, CollectionError) else "configuration_failed"
         print(f"Collection mislukt: {category}", file=sys.stderr)
         return 2
+    finally:
+        if gpsd_provider is not None:
+            gpsd_provider.stop()
 
     print(f"Waarnemingen opgeslagen: {summary.stored_observations}")
     print(f"Frames overgeslagen: {summary.unsupported_packets}")
