@@ -90,3 +90,37 @@ class NetworkFinding:
     representative_band: str
     encryption: EncryptionCategory
     ssid_present: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreFactor:
+    name: str
+    points: int
+
+
+@dataclass(frozen=True, slots=True)
+class ScoredNetworkFinding:
+    finding: NetworkFinding
+    score: int
+    score_factors: tuple[ScoreFactor, ...]
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.score <= 100:
+            raise ValueError("score must be between 0 and 100")
+        if self.score != sum(factor.points for factor in self.score_factors):
+            raise ValueError("score must equal the sum of its factors")
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessingResult:
+    findings: tuple[ScoredNetworkFinding, ...]
+    input_observation_count: int
+    accepted_observation_count: int
+    rejected_observation_count: int
+    rejection_reasons: dict[str, int]
+
+    def __post_init__(self) -> None:
+        if self.input_observation_count != (
+            self.accepted_observation_count + self.rejected_observation_count
+        ):
+            raise ValueError("processing counts must add up")

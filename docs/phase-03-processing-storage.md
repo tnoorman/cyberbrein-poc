@@ -71,3 +71,17 @@ Processing voert de stappen in deze volgorde uit:
 
 Storage bewaart geen losse waarnemingen. Een opslagtransactie vervangt de resultaten van één
 meetronde atomair, zodat een gedeeltelijke run niet als compleet resultaat zichtbaar wordt.
+
+## PoC-score
+
+De exposurescore loopt van 0 tot en met 100 en is de som van vier zichtbare factoren:
+
+- geadverteerde encryptie: `WPA3=0`, `WPA2=10`, `WPA=30`, `WEP=45`, `OPEN=50`,
+  `UNKNOWN=40`;
+- representatieve signaalsterkte: `30` punten vanaf -50 dBm, `20` vanaf -70 dBm en anders `10`;
+- aanwezige SSID: `10` punten, uitsluitend als zichtbaarheidsindicator;
+- herhaalde waarneming: `0` punten bij één waarneming, `5` bij 2-9 en `10` vanaf 10.
+
+De score is een uitlegbare prioritering binnen deze PoC, geen bewijs dat een netwerk kwetsbaar is.
+De losse factoren worden samen met het totaal opgeslagen zodat Presentation de berekening kan
+uitleggen.
