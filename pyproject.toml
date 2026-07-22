@@ -16,6 +16,7 @@ dependencies = [
     "pyproj",
     "python-dotenv",
     "scapy",
+    "shapely",
     "sqlalchemy",
     "streamlit",
     "streamlit-folium",
