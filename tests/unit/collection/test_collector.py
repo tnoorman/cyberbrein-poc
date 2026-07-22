@@ -230,12 +230,25 @@ def test_cli_returns_controlled_nonzero_exit_without_leaking_setup_error(
     from cyberbrein.collection import cli
 
     sensitive_error = "AA:BB:CC:DD:EE:FF CYBERBREIN_TEST_SECRET_SSID 52.123,4.567"
+    interface_lifecycle: list[str] = []
 
     def failing_writer(database_path: str) -> None:
         del database_path
         raise RuntimeError(sensitive_error)
 
+    class FakeInterfaceManager:
+        def __init__(self, interface: str) -> None:
+            del interface
+
+        def prepare(self, *, auto_monitor: bool = True) -> None:
+            assert auto_monitor is True
+            interface_lifecycle.append("prepared")
+
+        def restore(self) -> None:
+            interface_lifecycle.append("restored")
+
     monkeypatch.setattr(cli, "SQLiteObservationWriter", failing_writer)
+    monkeypatch.setattr(cli, "InterfaceManager", FakeInterfaceManager)
 
     exit_code = cli.main(
         [
@@ -250,6 +263,7 @@ def test_cli_returns_controlled_nonzero_exit_without_leaking_setup_error(
 
     captured = capsys.readouterr()
     assert exit_code == 2
+    assert interface_lifecycle == ["prepared", "restored"]
     assert "configuration_failed" in captured.err
     assert sensitive_error not in captured.out
     assert sensitive_error not in captured.err

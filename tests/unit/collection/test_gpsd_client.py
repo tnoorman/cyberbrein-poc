@@ -1,8 +1,13 @@
 from datetime import datetime, timezone
+from threading import Event
 
 import pytest
 
-from cyberbrein.collection.gpsd_client import GPSD_WATCH_COMMAND, GpsdClient
+from cyberbrein.collection.gpsd_client import (
+    GPSD_WATCH_COMMAND,
+    CachedGpsFixProvider,
+    GpsdClient,
+)
 from cyberbrein.collection.models import GpsFix
 
 
@@ -107,3 +112,84 @@ def test_get_latest_fix_ignores_invalid_messages(message: bytes) -> None:
     client, _ = _client_for([message])
 
     assert client.get_latest_fix() is None
+
+
+class FakeFixSource:
+    def __init__(self, fixes: list[GpsFix | None]) -> None:
+        self._fixes = iter(fixes)
+        self.called = Event()
+
+    def get_latest_fix(self) -> GpsFix | None:
+        self.called.set()
+        return next(self._fixes, None)
+
+
+def _valid_fix() -> GpsFix:
+    return GpsFix(
+        latitude=0.0,
+        longitude=0.0,
+        mode=3,
+        accuracy_m=4.5,
+        observed_at_utc=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+
+def test_cache_reads_source_in_background_and_returns_fix() -> None:
+    source = FakeFixSource([_valid_fix()])
+    cache = CachedGpsFixProvider(source, refresh_interval_seconds=0.01)
+
+    cache.start()
+    try:
+        assert cache.wait_for_fix(1.0) == _valid_fix()
+        assert cache.get_latest_fix() == _valid_fix()
+    finally:
+        cache.stop()
+
+
+def test_cache_returns_immediately_while_source_is_blocked() -> None:
+    release_source = Event()
+
+    class BlockingSource:
+        def get_latest_fix(self) -> GpsFix | None:
+            release_source.wait(1.0)
+            return _valid_fix()
+
+    cache = CachedGpsFixProvider(BlockingSource())
+    cache.start()
+    try:
+        assert cache.get_latest_fix() is None
+    finally:
+        release_source.set()
+        cache.stop()
+
+
+def test_cache_rejects_stale_fix_using_monotonic_age() -> None:
+    monotonic_time = [100.0]
+    cache = CachedGpsFixProvider(
+        FakeFixSource([_valid_fix()]),
+        max_age_seconds=5.0,
+        refresh_interval_seconds=10.0,
+        monotonic_clock=lambda: monotonic_time[0],
+    )
+    cache.start()
+    try:
+        assert cache.wait_for_fix(1.0) == _valid_fix()
+        monotonic_time[0] = 105.1
+        assert cache.get_latest_fix() is None
+    finally:
+        cache.stop()
+
+
+def test_wait_for_fix_returns_none_after_timeout() -> None:
+    monotonic_time = [100.0]
+    source = FakeFixSource([None])
+    cache = CachedGpsFixProvider(
+        source,
+        refresh_interval_seconds=10.0,
+        monotonic_clock=lambda: monotonic_time.pop(0) if len(monotonic_time) > 1 else 101.0,
+    )
+    cache.start()
+    try:
+        assert cache.wait_for_fix(0.0) is None
+    finally:
+        cache.stop()
