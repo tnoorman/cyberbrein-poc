@@ -18,4 +18,5 @@ build/
 *.egg-info/
 data/raw/
 data/processed/
+data/local/
 exports/
