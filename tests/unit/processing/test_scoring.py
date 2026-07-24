@@ -19,7 +19,8 @@ def _finding(**changes: object) -> NetworkFinding:
         representative_observed_at_utc=observed_at,
         representative_latitude=1.0,
         representative_longitude=2.0,
-        representative_rssi_dbm=-81,
+        average_rssi_dbm=-81.0,
+        strongest_rssi_dbm=-81,
         representative_channel=36,
         representative_frequency_mhz=5180,
         representative_band="5GHz",
@@ -33,7 +34,8 @@ def test_maximum_score_is_sum_of_three_report_factors() -> None:
     scored = score_network_finding(
         _finding(
             observation_count=10,
-            representative_rssi_dbm=-66,
+            average_rssi_dbm=-66.0,
+            strongest_rssi_dbm=-66,
             encryption=EncryptionCategory.OPEN,
         )
     )
@@ -41,12 +43,19 @@ def test_maximum_score_is_sum_of_three_report_factors() -> None:
     assert scored.score == 8
     assert scored.attention_level is AttentionLevel.RED
     assert [
-        (factor.name, factor.contribution, factor.weight, factor.weighted_points)
+        (
+            factor.name,
+            factor.observed_value,
+            factor.category,
+            factor.contribution,
+            factor.weight,
+            factor.weighted_points,
+        )
         for factor in scored.score_factors
     ] == [
-        ("signal_strength", 2, 1, 2),
-        ("encryption", 2, 2, 4),
-        ("observation_frequency", 2, 1, 2),
+        ("signal_strength", "-66 dBm", "strong", 2, 1, 2),
+        ("encryption", "OPEN", "open", 2, 2, 4),
+        ("observation_frequency", "10", "frequent", 2, 1, 2),
     ]
 
 
@@ -77,7 +86,7 @@ def test_encryption_contribution_matches_report(
     [(-81, 0), (-80, 1), (-67, 1), (-66, 2)],
 )
 def test_signal_boundaries_match_report(rssi: int, contribution: int) -> None:
-    scored = score_network_finding(_finding(representative_rssi_dbm=rssi))
+    scored = score_network_finding(_finding(average_rssi_dbm=float(rssi), strongest_rssi_dbm=rssi))
     factor = next(item for item in scored.score_factors if item.name == "signal_strength")
     assert factor.contribution == contribution
     assert factor.weight == 1
@@ -115,11 +124,13 @@ def test_attention_boundaries(expected_score: int, expected_level: AttentionLeve
         0: _finding(),
         2: _finding(encryption=EncryptionCategory.OUTDATED),
         3: _finding(
-            representative_rssi_dbm=-80,
+            average_rssi_dbm=-80.0,
+            strongest_rssi_dbm=-80,
             encryption=EncryptionCategory.OUTDATED,
         ),
         5: _finding(
-            representative_rssi_dbm=-66,
+            average_rssi_dbm=-66.0,
+            strongest_rssi_dbm=-66,
             encryption=EncryptionCategory.OUTDATED,
             observation_count=2,
         ),
@@ -128,7 +139,8 @@ def test_attention_boundaries(expected_score: int, expected_level: AttentionLeve
             observation_count=10,
         ),
         8: _finding(
-            representative_rssi_dbm=-66,
+            average_rssi_dbm=-66.0,
+            strongest_rssi_dbm=-66,
             encryption=EncryptionCategory.OPEN,
             observation_count=10,
         ),

@@ -9,12 +9,14 @@ description = "Proof of concept voor passieve Wi-Fi-meetdata, datapipeline en GI
 requires-python = ">=3.11"
 dependencies = [
     "folium",
+    "geoalchemy2",
     "geopandas",
     "pandas",
     "plotly",
     "psycopg2-binary",
     "pyproj",
     "python-dotenv",
+    "reportlab",
     "scapy",
     "shapely",
     "sqlalchemy",
@@ -24,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pypdf",
     "pytest",
     "pytest-cov",
     "ruff",

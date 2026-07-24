@@ -1,6 +1,5 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from shapely.geometry import Polygon
 
@@ -31,7 +30,9 @@ def _observation(**changes: object) -> AcceptedObservation:
     return replace(observation, **changes)
 
 
-def test_accepted_observations_flow_through_processing_into_storage(tmp_path: Path) -> None:
+def test_accepted_observations_flow_through_processing_into_storage(
+    clean_postgis: str,
+) -> None:
     zone = ApprovedZone("zone-a", Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]))
     processing = ProcessingService([zone], ProcessingPolicy(max_gps_accuracy_m=10.0))
     result = processing.process(
@@ -49,11 +50,10 @@ def test_accepted_observations_flow_through_processing_into_storage(tmp_path: Pa
     assert result.rejected_observation_count == 1
     assert result.rejection_reasons == {"outside_approved_zone": 1}
 
-    database_path = tmp_path / "processed.sqlite"
-    storage = StorageRepository(f"sqlite:///{database_path}")
+    storage = StorageRepository(clean_postgis)
     storage.initialize()
     try:
-        storage.replace_measurement_round("synthetic-round", result.findings)
+        storage.replace_measurement_round("synthetic-round", [zone], result.findings)
         assert storage.load_measurement_round("synthetic-round") == result.findings
     finally:
         storage.close()

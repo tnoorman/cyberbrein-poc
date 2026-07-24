@@ -40,7 +40,7 @@ def _observation(**changes: object) -> AcceptedObservation:
         ({"gps_accuracy_m": None}, ProcessingRejectionReason.MISSING_GPS_ACCURACY),
         ({"gps_accuracy_m": -1.0}, ProcessingRejectionReason.INVALID_GPS_ACCURACY),
         ({"gps_accuracy_m": float("inf")}, ProcessingRejectionReason.INVALID_GPS_ACCURACY),
-        ({"gps_accuracy_m": 25.1}, ProcessingRejectionReason.GPS_ACCURACY_EXCEEDED),
+        ({"gps_accuracy_m": 15.1}, ProcessingRejectionReason.GPS_ACCURACY_EXCEEDED),
     ],
 )
 def test_quality_rejections(
@@ -56,7 +56,7 @@ def test_quality_rejections(
         {},
         {"frequency_mhz": None},
         {"frequency_mhz": 2412, "band": "2.4GHz", "channel": 1},
-        {"gps_accuracy_m": 25.0},
+        {"gps_accuracy_m": 15.0},
     ],
 )
 def test_quality_accepts_supported_observations(changes: dict[str, object]) -> None:

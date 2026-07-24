@@ -36,7 +36,7 @@ class ProcessingRejectionReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ProcessingPolicy:
-    max_gps_accuracy_m: float = 25.0
+    max_gps_accuracy_m: float = 15.0
 
     def __post_init__(self) -> None:
         if (
@@ -90,7 +90,8 @@ class NetworkFinding:
     representative_observed_at_utc: datetime
     representative_latitude: float
     representative_longitude: float
-    representative_rssi_dbm: int
+    average_rssi_dbm: float
+    strongest_rssi_dbm: int
     representative_channel: int
     representative_frequency_mhz: int | None
     representative_band: str
@@ -101,10 +102,18 @@ class NetworkFinding:
 @dataclass(frozen=True, slots=True)
 class ScoreFactor:
     name: str
+    observed_value: str
+    category: str
     contribution: int
     weight: int
 
     def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("score factor name is required")
+        if not self.observed_value.strip():
+            raise ValueError("score factor observed value is required")
+        if not self.category.strip():
+            raise ValueError("score factor category is required")
         if (
             not isinstance(self.contribution, int)
             or isinstance(self.contribution, bool)

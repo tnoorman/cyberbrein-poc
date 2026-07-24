@@ -18,20 +18,29 @@ _ENCRYPTION_CONTRIBUTION = {
 
 def score_network_finding(finding: NetworkFinding) -> ScoredNetworkFinding:
     """Calculate the report-defined weighted exposure score from three factors."""
+    signal_contribution = _signal_contribution(finding.strongest_rssi_dbm)
+    encryption_contribution = _ENCRYPTION_CONTRIBUTION[finding.encryption]
+    frequency_contribution = _frequency_contribution(finding.observation_count)
     factors = (
         ScoreFactor(
             name="signal_strength",
-            contribution=_signal_contribution(finding.representative_rssi_dbm),
+            observed_value=f"{finding.strongest_rssi_dbm} dBm",
+            category=("weak", "medium", "strong")[signal_contribution],
+            contribution=signal_contribution,
             weight=1,
         ),
         ScoreFactor(
             name="encryption",
-            contribution=_ENCRYPTION_CONTRIBUTION[finding.encryption],
+            observed_value=finding.encryption.value,
+            category=("current", "outdated_or_unknown", "open")[encryption_contribution],
+            contribution=encryption_contribution,
             weight=2,
         ),
         ScoreFactor(
             name="observation_frequency",
-            contribution=_frequency_contribution(finding.observation_count),
+            observed_value=str(finding.observation_count),
+            category=("incidental", "multiple", "frequent")[frequency_contribution],
+            contribution=frequency_contribution,
             weight=1,
         ),
     )

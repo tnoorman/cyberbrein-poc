@@ -1,11 +1,12 @@
 from dataclasses import replace
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect, select
+from shapely.geometry import Polygon
+from sqlalchemy import create_engine, inspect, select, text
 
 from cyberbrein.processing.models import (
+    ApprovedZone,
     AttentionLevel,
     EncryptionCategory,
     NetworkFinding,
@@ -13,11 +14,18 @@ from cyberbrein.processing.models import (
     ScoreFactor,
 )
 from cyberbrein.storage.repository import (
+    ActiveMeasurementRoundError,
     StorageRepository,
     measurement_rounds,
     network_findings,
+    network_scores,
     score_factors,
+    zones,
 )
+
+
+def _zone(zone_id: str = "zone-a") -> ApprovedZone:
+    return ApprovedZone(zone_id, Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]))
 
 
 def _scored_finding(**changes: object) -> ScoredNetworkFinding:
@@ -30,122 +38,154 @@ def _scored_finding(**changes: object) -> ScoredNetworkFinding:
         first_observed_at_utc=observed_at,
         last_observed_at_utc=observed_at,
         representative_observed_at_utc=observed_at,
-        representative_latitude=1.0,
-        representative_longitude=2.0,
-        representative_rssi_dbm=-60,
+        representative_latitude=0.5,
+        representative_longitude=0.5,
+        average_rssi_dbm=-65.0,
+        strongest_rssi_dbm=-60,
         representative_channel=36,
         representative_frequency_mhz=5180,
         representative_band="5GHz",
-        encryption=EncryptionCategory.WPA2,
+        encryption=EncryptionCategory.OUTDATED,
         ssid_present=True,
     )
     finding_changes = {key: value for key, value in changes.items() if hasattr(finding, key)}
     finding = replace(finding, **finding_changes)
     factors = (
-        ScoreFactor("signal_strength", contribution=1, weight=1),
-        ScoreFactor("encryption", contribution=1, weight=2),
-        ScoreFactor("observation_frequency", contribution=0, weight=1),
+        ScoreFactor("signal_strength", "-60 dBm", "medium", 1, 1),
+        ScoreFactor("encryption", "OUTDATED", "outdated_or_unknown", 1, 2),
+        ScoreFactor("observation_frequency", "2", "multiple", 1, 1),
     )
-    return ScoredNetworkFinding(finding, 3, AttentionLevel.YELLOW, factors)
+    return ScoredNetworkFinding(finding, 4, AttentionLevel.YELLOW, factors)
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> tuple[StorageRepository, Path]:
-    database_path = tmp_path / "storage.sqlite"
-    instance = StorageRepository(f"sqlite:///{database_path}")
+def repository(clean_postgis: str) -> StorageRepository:
+    instance = StorageRepository(clean_postgis)
     instance.initialize()
-    yield instance, database_path
+    yield instance
     instance.close()
 
 
-def test_round_trip_preserves_processed_contract(
-    repository: tuple[StorageRepository, Path],
-) -> None:
-    instance, _ = repository
+def test_round_trip_preserves_processed_contract(repository: StorageRepository) -> None:
     expected = _scored_finding()
-    instance.replace_measurement_round("synthetic-round", [expected])
-    assert instance.load_measurement_round("synthetic-round") == (expected,)
+    repository.replace_measurement_round("synthetic-round", [_zone()], [expected])
+    assert repository.load_measurement_round("synthetic-round") == (expected,)
+    stored_zone = repository.load_zones("synthetic-round")
+    assert [zone.zone_id for zone in stored_zone] == ["zone-a"]
+    assert stored_zone[0].geometry.equals(_zone().geometry)
 
 
-def test_replacing_round_removes_old_findings_and_factors(
-    repository: tuple[StorageRepository, Path],
-) -> None:
-    instance, _ = repository
-    instance.replace_measurement_round("synthetic-round", [_scored_finding()])
+def test_replacing_same_round_is_atomic(repository: StorageRepository) -> None:
+    repository.replace_measurement_round("synthetic-round", [_zone()], [_scored_finding()])
     replacement = _scored_finding(network_id="replacement-network")
-    instance.replace_measurement_round("synthetic-round", [replacement])
-    assert instance.load_measurement_round("synthetic-round") == (replacement,)
+    repository.replace_measurement_round("synthetic-round", [_zone()], [replacement])
+    assert repository.load_measurement_round("synthetic-round") == (replacement,)
+
+
+def test_different_active_round_is_refused(repository: StorageRepository) -> None:
+    repository.replace_measurement_round("synthetic-round", [_zone()], [_scored_finding()])
+    with pytest.raises(ActiveMeasurementRoundError):
+        repository.replace_measurement_round("other-round", [_zone()], [])
+    assert repository.load_measurement_round("synthetic-round") == (_scored_finding(),)
+
+
+def test_empty_round_retains_approved_zone(repository: StorageRepository) -> None:
+    repository.replace_measurement_round("empty-round", [_zone()], [])
+    assert repository.load_measurement_round("empty-round") == ()
+    stored_zone = repository.load_zones("empty-round")
+    assert [zone.zone_id for zone in stored_zone] == ["zone-a"]
+    assert stored_zone[0].geometry.equals(_zone().geometry)
 
 
 def test_invalid_replacement_leaves_existing_round_unchanged(
-    repository: tuple[StorageRepository, Path],
+    repository: StorageRepository,
 ) -> None:
-    instance, _ = repository
-    existing = _scored_finding()
-    instance.replace_measurement_round("synthetic-round", [existing])
+    expected = _scored_finding()
+    repository.replace_measurement_round("synthetic-round", [_zone()], [expected])
     invalid = _scored_finding(measurement_round_id="different-round")
     with pytest.raises(ValueError, match="requested measurement round"):
-        instance.replace_measurement_round("synthetic-round", [invalid])
-    assert instance.load_measurement_round("synthetic-round") == (existing,)
+        repository.replace_measurement_round("synthetic-round", [_zone()], [invalid])
+    assert repository.load_measurement_round("synthetic-round") == (expected,)
 
 
-def test_empty_completed_round_is_retained(repository: tuple[StorageRepository, Path]) -> None:
-    instance, database_path = repository
-    instance.replace_measurement_round("empty-round", [])
-    assert instance.load_measurement_round("empty-round") == ()
-    engine = create_engine(f"sqlite:///{database_path}")
-    with engine.connect() as connection:
-        assert connection.execute(select(measurement_rounds.c.measurement_round_id)).scalar_one()
-    engine.dispose()
-
-
-def test_schema_contains_no_raw_identifiers_or_secret(
-    repository: tuple[StorageRepository, Path],
+def test_schema_has_postgis_types_indexes_and_no_raw_identifiers(
+    repository: StorageRepository,
+    postgres_url: str,
 ) -> None:
-    _, database_path = repository
-    engine = create_engine(f"sqlite:///{database_path}")
+    del repository
+    engine = create_engine(postgres_url)
     schema = inspect(engine)
+    table_names = set(schema.get_table_names())
+    application_tables = {
+        "measurement_round",
+        "zone",
+        "network_finding",
+        "network_score",
+        "score_factor",
+    }
+    assert application_tables <= table_names
+    assert "spatial_ref_sys" in table_names
     columns = {
         column["name"]
-        for table_name in schema.get_table_names()
+        for table_name in application_tables
         for column in schema.get_columns(table_name)
     }
     assert {"bssid", "ssid", "secret", "raw_observation"}.isdisjoint(columns)
-    assert {measurement_rounds.name, network_findings.name, score_factors.name} == set(
-        schema.get_table_names()
+    with engine.connect() as connection:
+        geometry = connection.execute(
+            text(
+                "SELECT f_table_name, f_geometry_column, type, srid "
+                "FROM geometry_columns WHERE f_table_name IN ('zone', 'network_finding') "
+                "ORDER BY f_table_name"
+            )
+        ).all()
+    assert geometry == [
+        ("network_finding", "display_point", "POINT", 4326),
+        ("zone", "polygon", "MULTIPOLYGON", 4326),
+    ]
+    assert any(
+        index["name"].endswith("display_point") for index in schema.get_indexes("network_finding")
     )
+    assert any(index["name"].endswith("polygon") for index in schema.get_indexes("zone"))
     engine.dispose()
 
 
-def test_schema_stores_explainable_score_components(
-    repository: tuple[StorageRepository, Path],
+def test_schema_stores_separate_scores_and_explainable_factors(
+    repository: StorageRepository,
+    postgres_url: str,
 ) -> None:
-    instance, database_path = repository
-    instance.replace_measurement_round("synthetic-round", [_scored_finding()])
-    engine = create_engine(f"sqlite:///{database_path}")
+    repository.replace_measurement_round("synthetic-round", [_zone()], [_scored_finding()])
+    engine = create_engine(postgres_url)
     with engine.connect() as connection:
+        round_row = connection.execute(select(measurement_rounds)).mappings().one()
         finding = connection.execute(select(network_findings)).mappings().one()
+        score = connection.execute(select(network_scores)).mappings().one()
         factors = connection.execute(
             select(score_factors).order_by(score_factors.c.position)
         ).mappings()
-        assert finding["score"] == 3
-        assert finding["attention_level"] == "YELLOW"
-        assert [
-            (
-                factor["name"],
-                factor["contribution"],
-                factor["weight"],
-                factor["weighted_points"],
-            )
-            for factor in factors
-        ] == [
-            ("signal_strength", 1, 1, 1),
-            ("encryption", 1, 2, 2),
-            ("observation_frequency", 0, 1, 0),
-        ]
+        zone_count = connection.execute(select(zones.c.zone_id)).scalar_one()
+    assert round_row["status"] == "COMPLETED"
+    assert finding["average_rssi_dbm"] == -65.0
+    assert score["total_points"] == 4
+    assert score["score_color"] == "YELLOW"
+    assert zone_count == "zone-a"
+    assert [
+        (
+            factor["factor_type"],
+            factor["observed_value"],
+            factor["category"],
+            factor["points"],
+            factor["weight"],
+        )
+        for factor in factors
+    ] == [
+        ("signal_strength", "-60 dBm", "medium", 1, 1),
+        ("encryption", "OUTDATED", "outdated_or_unknown", 1, 2),
+        ("observation_frequency", "2", "multiple", 1, 1),
+    ]
     engine.dispose()
 
 
-def test_sqlite_storage_file_is_restricted(repository: tuple[StorageRepository, Path]) -> None:
-    _, database_path = repository
-    assert database_path.stat().st_mode & 0o777 == 0o600
+def test_non_postgresql_backend_is_rejected() -> None:
+    with pytest.raises(ValueError, match="PostgreSQL"):
+        StorageRepository("sqlite:///:memory:")

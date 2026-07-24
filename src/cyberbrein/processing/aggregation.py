@@ -41,6 +41,7 @@ def _aggregate_group(
     representative = min(group, key=_representative_key).observation
     encryption = min(group, key=lambda item: _ENCRYPTION_STRENGTH[item.encryption]).encryption
     timestamps = [item.observation.observed_at_utc for item in group]
+    rssi_values = [item.observation.rssi_dbm for item in group]
     return NetworkFinding(
         measurement_round_id=measurement_round_id,
         zone_id=zone_id,
@@ -51,7 +52,8 @@ def _aggregate_group(
         representative_observed_at_utc=representative.observed_at_utc,
         representative_latitude=representative.latitude,
         representative_longitude=representative.longitude,
-        representative_rssi_dbm=representative.rssi_dbm,
+        average_rssi_dbm=sum(rssi_values) / len(rssi_values),
+        strongest_rssi_dbm=representative.rssi_dbm,
         representative_channel=representative.channel,
         representative_frequency_mhz=representative.frequency_mhz,
         representative_band=representative.band,

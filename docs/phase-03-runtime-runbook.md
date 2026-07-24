@@ -1,7 +1,8 @@
 # Fase 3 runtime-runbook
 
 Dit runbook verwerkt precies één tijdelijke Collection-buffer via Ingestion en Processing naar
-geverifieerde SQLite-opslag. De CLI toont uitsluitend aantallen en veilige afwijzingscategorieën.
+geverifieerde PostgreSQL/PostGIS-opslag. Alleen de Collection-buffer gebruikt SQLite. De CLI toont
+uitsluitend aantallen en veilige afwijzingscategorieën.
 
 ## Lokale invoer voorbereiden
 
@@ -9,7 +10,7 @@ Runtimebestanden staan onder `data/local`, `data/smoke` en `data/processed` en w
 gecommit.
 
 ```bash
-mkdir -p data/local data/smoke data/processed
+mkdir -p data/local data/smoke
 ```
 
 Plaats een lokaal goedgekeurd zonebestand in `data/local/zones.geojson`. Het bestand:
@@ -57,22 +58,31 @@ sudo -n /home/cyberbrein/poc/.venv/bin/python \
 Ga alleen verder bij exitcode `0`, een duidelijk bruikbaar aantal waarnemingen en geen
 structureel ontbrekende GPS-fixes.
 
+## PostGIS-configuratie
+
+De lokale database gebruikt de Unix-socket en peer-authenticatie. Zet de URL alleen in de
+runtimeomgeving; er staat geen databasewachtwoord in Git of een CLI-argument.
+
+```bash
+export CYBERBREIN_DATABASE_URL="postgresql+psycopg2:///cyberbrein_poc"
+```
+
+De database bevat maximaal één nog niet verwijderde meetronde. Eén meetronde mag meerdere
+goedgekeurde zones bevatten.
+
 ## Pipeline uitvoeren
 
 De pipeline vereist dat de ruwe buffer rechten `600` heeft. Gebruik voor de definitieve run de
 cleanupvlag; zonder deze vlag blijven bronbuffer en secret beschikbaar voor herstel.
 
 ```bash
-STORAGE_DB="data/processed/${ROUND_ID}.sqlite"
-
 sudo -n /home/cyberbrein/poc/.venv/bin/python \
   -m cyberbrein.pipeline \
   --source-db "$SOURCE_DB" \
   --measurement-round-id "$ROUND_ID" \
   --zones data/local/zones.geojson \
   --secret-file "$SECRET_PATH" \
-  --storage-db "$STORAGE_DB" \
-  --max-gps-accuracy 25 \
+  --max-gps-accuracy 15 \
   --delete-source-on-success
 ```
 
@@ -90,36 +100,26 @@ De CLI toont nooit BSSID, SSID, secret, gepseudonimiseerde netwerk-ID of coördi
 ## Veilige eindcontrole
 
 ```bash
-stat -c 'Storage-rechten: %a' "$STORAGE_DB"
 test ! -e "$SOURCE_DB" && echo "Bronbuffer verwijderd"
 test ! -e "$SECRET_PATH" && echo "Secret verwijderd"
 
-sudo -n /home/cyberbrein/poc/.venv/bin/python -c '
-import sqlite3
-import sys
-
-with sqlite3.connect(sys.argv[1]) as connection:
-    findings = connection.execute("SELECT COUNT(*) FROM network_findings").fetchone()[0]
-    factors = connection.execute("SELECT COUNT(*) FROM score_factors").fetchone()[0]
-    invalid_scores = connection.execute("""
-        SELECT COUNT(*)
-        FROM network_findings
-        WHERE score NOT BETWEEN 0 AND 8
-           OR (score BETWEEN 0 AND 2 AND attention_level != 'GREEN')
-           OR (score BETWEEN 3 AND 5 AND attention_level != 'YELLOW')
-           OR (score BETWEEN 6 AND 8 AND attention_level != 'RED')
-    """).fetchone()[0]
-print("Netwerkvondsten:", findings)
-print("Scorefactoren:", factors)
-print("Drie factoren per vondst:", factors == findings * 3)
-print("Ongeldige score/kleur-combinaties:", invalid_scores)
-' "$STORAGE_DB"
+psql -d cyberbrein_poc -v ON_ERROR_STOP=1 -c "
+SELECT
+  (SELECT count(*) FROM network_finding) AS netwerkvondsten,
+  (SELECT count(*) FROM score_factor) AS scorefactoren,
+  NOT EXISTS (
+    SELECT 1
+    FROM network_score
+    WHERE total_points NOT BETWEEN 0 AND 8
+       OR (total_points BETWEEN 0 AND 2 AND score_color <> 'GREEN')
+       OR (total_points BETWEEN 3 AND 5 AND score_color <> 'YELLOW')
+       OR (total_points BETWEEN 6 AND 8 AND score_color <> 'RED')
+  ) AS geldige_scores;
+"
 ```
 
-Verwacht Storage-rechten `600`, een verwijderde bronbuffer en secret, en alleen numerieke
-opslagtellingen. `Drie factoren per vondst` moet `True` zijn en het aantal ongeldige
-score/kleur-combinaties moet `0` zijn. Toon geen inhoudelijke rijen uit Storage tijdens de
-rooktest.
+Verwacht een verwijderde bronbuffer en secret, drie scorefactoren per netwerkvondst en
+`geldige_scores = t`. Toon geen inhoudelijke rijen uit Storage tijdens de rooktest.
 
 ## Fouten en herstel
 

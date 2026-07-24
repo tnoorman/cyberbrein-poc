@@ -17,6 +17,7 @@ class StoragePort(Protocol):
     def replace_measurement_round(
         self,
         measurement_round_id: str,
+        zones: Sequence[ApprovedZone],
         findings: Sequence[ScoredNetworkFinding],
     ) -> None: ...
 
@@ -42,17 +43,13 @@ class PipelineService:
         measurement_round_id: str,
         zones: Sequence[ApprovedZone],
         secret: str,
-        storage_database_path: str | Path,
+        storage_database_url: str,
         max_gps_accuracy_m: float,
     ) -> PipelineResult:
         if not measurement_round_id.strip():
             raise PipelineRuntimeError("invalid_measurement_round_id")
 
         source_path = Path(source_database_path)
-        storage_path = Path(storage_database_path)
-        if _same_path(source_path, storage_path):
-            raise PipelineRuntimeError("invalid_storage_configuration")
-
         _validate_source_round(source_path, measurement_round_id)
         try:
             ingestion_result = IngestionService(source_path).ingest(secret)
@@ -74,13 +71,16 @@ class PipelineService:
             raise PipelineRuntimeError("processing_failed") from error
 
         try:
-            storage_path.parent.mkdir(parents=True, exist_ok=True)
-            storage = self._storage_factory(f"sqlite:///{storage_path.resolve()}")
+            storage = self._storage_factory(storage_database_url)
         except Exception as error:
             raise PipelineRuntimeError("storage_failed") from error
         try:
             storage.initialize()
-            storage.replace_measurement_round(measurement_round_id, processing_result.findings)
+            storage.replace_measurement_round(
+                measurement_round_id,
+                zones,
+                processing_result.findings,
+            )
             stored_findings = storage.load_measurement_round(measurement_round_id)
         except Exception as error:
             try:
@@ -119,10 +119,3 @@ def _validate_source_round(source_path: Path, measurement_round_id: str) -> None
     round_ids = {row[0] for row in rows}
     if round_ids != {measurement_round_id}:
         raise PipelineRuntimeError("measurement_round_mismatch")
-
-
-def _same_path(first: Path, second: Path) -> bool:
-    try:
-        return first.resolve() == second.resolve()
-    except OSError as error:
-        raise PipelineRuntimeError("invalid_storage_configuration") from error

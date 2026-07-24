@@ -61,7 +61,7 @@ def _write_secret(path: Path, mode: int = 0o600) -> None:
     path.chmod(mode)
 
 
-def _arguments(source: Path, zones: Path, secret: Path, storage: Path) -> list[str]:
+def _arguments(source: Path, zones: Path, secret: Path) -> list[str]:
     return [
         "--source-db",
         str(source),
@@ -71,30 +71,28 @@ def _arguments(source: Path, zones: Path, secret: Path, storage: Path) -> list[s
         str(zones),
         "--secret-file",
         str(secret),
-        "--storage-db",
-        str(storage),
     ]
 
 
 def test_cli_processes_without_deleting_inputs_by_default(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    clean_postgis: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = tmp_path / "source.sqlite"
     zones = tmp_path / "zones.geojson"
     secret = tmp_path / "round.secret"
-    storage = tmp_path / "processed.sqlite"
     _write_source(source)
     _write_zones(zones)
     _write_secret(secret)
 
-    exit_code = main(_arguments(source, zones, secret, storage))
+    monkeypatch.setenv("CYBERBREIN_DATABASE_URL", clean_postgis)
+    exit_code = main(_arguments(source, zones, secret))
 
     assert exit_code == 0
     assert source.exists()
     assert secret.exists()
-    assert storage.exists()
-    assert storage.stat().st_mode & 0o777 == 0o600
     captured = capsys.readouterr()
     assert "Ingestion geaccepteerd: 1" in captured.out
     assert "Netwerkvondsten opgeslagen: 1" in captured.out
@@ -104,11 +102,14 @@ def test_cli_processes_without_deleting_inputs_by_default(
         assert private_value not in captured.err
 
 
-def test_cli_cleanup_removes_source_sidecars_and_secret(tmp_path: Path) -> None:
+def test_cli_cleanup_removes_source_sidecars_and_secret(
+    tmp_path: Path,
+    clean_postgis: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = tmp_path / "source.sqlite"
     zones = tmp_path / "zones.geojson"
     secret = tmp_path / "round.secret"
-    storage = tmp_path / "processed.sqlite"
     _write_source(source)
     _write_zones(zones)
     _write_secret(secret)
@@ -116,13 +117,13 @@ def test_cli_cleanup_removes_source_sidecars_and_secret(tmp_path: Path) -> None:
     for sidecar in sidecars:
         sidecar.touch()
 
-    exit_code = main([*_arguments(source, zones, secret, storage), "--delete-source-on-success"])
+    monkeypatch.setenv("CYBERBREIN_DATABASE_URL", clean_postgis)
+    exit_code = main([*_arguments(source, zones, secret), "--delete-source-on-success"])
 
     assert exit_code == 0
     assert not source.exists()
     assert not secret.exists()
     assert all(not sidecar.exists() for sidecar in sidecars)
-    assert storage.exists()
 
 
 def test_invalid_secret_permissions_fail_without_sensitive_output(
@@ -136,7 +137,7 @@ def test_invalid_secret_permissions_fail_without_sensitive_output(
     _write_zones(zones)
     _write_secret(secret, mode=0o644)
 
-    exit_code = main(_arguments(source, zones, secret, tmp_path / "processed.sqlite"))
+    exit_code = main(_arguments(source, zones, secret))
 
     assert exit_code == 2
     captured = capsys.readouterr()
@@ -146,7 +147,10 @@ def test_invalid_secret_permissions_fail_without_sensitive_output(
     assert secret.exists()
 
 
-def test_pipeline_failure_keeps_source_and_secret(tmp_path: Path) -> None:
+def test_pipeline_failure_keeps_source_and_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source = tmp_path / "source.sqlite"
     zones = tmp_path / "zones.geojson"
     secret = tmp_path / "round.secret"
@@ -154,31 +158,15 @@ def test_pipeline_failure_keeps_source_and_secret(tmp_path: Path) -> None:
     _write_zones(zones)
     _write_secret(secret)
 
-    exit_code = main(
-        [
-            *_arguments(source, zones, secret, source),
-            "--delete-source-on-success",
-        ]
+    monkeypatch.setenv(
+        "CYBERBREIN_DATABASE_URL",
+        "postgresql+psycopg2:///database_that_does_not_exist",
     )
+    exit_code = main([*_arguments(source, zones, secret), "--delete-source-on-success"])
 
     assert exit_code == 3
     assert source.exists()
     assert secret.exists()
-
-
-def test_existing_storage_symlink_is_rejected(tmp_path: Path) -> None:
-    source = tmp_path / "source.sqlite"
-    zones = tmp_path / "zones.geojson"
-    secret = tmp_path / "round.secret"
-    storage_target = tmp_path / "target.sqlite"
-    storage_link = tmp_path / "processed.sqlite"
-    _write_source(source)
-    _write_zones(zones)
-    _write_secret(secret)
-    storage_target.touch()
-    storage_link.symlink_to(storage_target)
-
-    assert main(_arguments(source, zones, secret, storage_link)) == 2
 
 
 def test_source_buffer_must_have_restricted_permissions(tmp_path: Path) -> None:
@@ -190,7 +178,7 @@ def test_source_buffer_must_have_restricted_permissions(tmp_path: Path) -> None:
     _write_zones(zones)
     _write_secret(secret)
 
-    assert main(_arguments(source, zones, secret, tmp_path / "processed.sqlite")) == 2
+    assert main(_arguments(source, zones, secret)) == 2
     assert source.exists()
     assert secret.exists()
 
