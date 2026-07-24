@@ -20,7 +20,8 @@ dependencies = [
     "scapy",
     "shapely",
     "sqlalchemy",
-    "streamlit",
+    "streamlit[pdf]",
+    "streamlit-pdf<2",
     "streamlit-folium",
 ]
 
