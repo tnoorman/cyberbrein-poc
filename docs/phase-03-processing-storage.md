@@ -20,7 +20,7 @@ Ingestion en Processing samen.
 
 ## GPS-kwaliteit en zones
 
-Een Processing-run krijgt een expliciete maximale GPS-onnauwkeurigheid. Een waarneming is alleen
+Een Processing-run gebruikt standaard maximaal 15 meter GPS-onnauwkeurigheid. Een waarneming is alleen
 bruikbaar als deze een 3D-fix (`gps_mode >= 3`) en een eindige, niet-negatieve
 `gps_accuracy_m` binnen die grens heeft.
 
@@ -49,7 +49,8 @@ configuratie veilig is.
 Waarnemingen worden gegroepeerd op `(measurement_round_id, zone_id, network_id)`. Daardoor blijft
 zichtbaar dat hetzelfde gepseudonimiseerde netwerk in meerdere zones is waargenomen.
 
-De representatieve meting is de waarneming met de hoogste RSSI. Bij gelijke RSSI wint de vroegste
+De gemiddelde RSSI wordt over alle gegroepeerde waarnemingen berekend. De sterkste RSSI en de
+representatieve meting komen uit de waarneming met de hoogste RSSI. Bij gelijke RSSI wint de vroegste
 tijdstempel; een laatste stabiele vergelijking op coördinaten en radio-eigenschappen maakt de
 uitkomst onafhankelijk van invoervolgorde. Het displaypunt, RSSI, kanaal, frequentie en band komen
 allemaal uit diezelfde meting en vormen dus geen kunstmatige combinatie. Het displaypunt heet in

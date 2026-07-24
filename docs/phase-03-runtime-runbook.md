@@ -72,7 +72,7 @@ sudo -n /home/cyberbrein/poc/.venv/bin/python \
   --zones data/local/zones.geojson \
   --secret-file "$SECRET_PATH" \
   --storage-db "$STORAGE_DB" \
-  --max-gps-accuracy 25 \
+  --max-gps-accuracy 15 \
   --delete-source-on-success
 ```
 

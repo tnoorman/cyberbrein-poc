@@ -32,7 +32,8 @@ def _scored_finding(**changes: object) -> ScoredNetworkFinding:
         representative_observed_at_utc=observed_at,
         representative_latitude=1.0,
         representative_longitude=2.0,
-        representative_rssi_dbm=-60,
+        average_rssi_dbm=-65.0,
+        strongest_rssi_dbm=-60,
         representative_channel=36,
         representative_frequency_mhz=5180,
         representative_band="5GHz",
@@ -42,9 +43,9 @@ def _scored_finding(**changes: object) -> ScoredNetworkFinding:
     finding_changes = {key: value for key, value in changes.items() if hasattr(finding, key)}
     finding = replace(finding, **finding_changes)
     factors = (
-        ScoreFactor("signal_strength", contribution=1, weight=1),
-        ScoreFactor("encryption", contribution=1, weight=2),
-        ScoreFactor("observation_frequency", contribution=0, weight=1),
+        ScoreFactor("signal_strength", "-60 dBm", "medium", contribution=1, weight=1),
+        ScoreFactor("encryption", "OUTDATED", "outdated_or_unknown", contribution=1, weight=2),
+        ScoreFactor("observation_frequency", "1", "incidental", contribution=0, weight=1),
     )
     return ScoredNetworkFinding(finding, 3, AttentionLevel.YELLOW, factors)
 

@@ -26,8 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-gps-accuracy",
         type=float,
-        default=25.0,
-        help="Maximum accepted GPS accuracy in metres (default: 25).",
+        default=15.0,
+        help="Maximum accepted GPS accuracy in metres (default: 15).",
     )
     parser.add_argument(
         "--delete-source-on-success",

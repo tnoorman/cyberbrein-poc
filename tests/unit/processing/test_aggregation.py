@@ -51,7 +51,8 @@ def test_strongest_observation_supplies_one_consistent_representative_measuremen
     finding = aggregate_network_findings([_zoned(weaker), _zoned(stronger)])[0]
 
     assert finding.observation_count == 2
-    assert finding.representative_rssi_dbm == -40
+    assert finding.average_rssi_dbm == -55
+    assert finding.strongest_rssi_dbm == -40
     assert finding.representative_channel == 36
     assert finding.representative_frequency_mhz == 5180
     assert finding.representative_band == "5GHz"
