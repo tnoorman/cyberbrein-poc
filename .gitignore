@@ -9,6 +9,7 @@ __pycache__/
 *.db-wal
 .env
 .env.*
+!.env.example
 .pytest_cache/
 .ruff_cache/
 .coverage

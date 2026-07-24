@@ -10,6 +10,21 @@ jobs:
   quality:
     name: Quality checks
     runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_DB: cyberbrein_test
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cyberbrein_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CYBERBREIN_TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/cyberbrein_test
 
     steps:
       - name: Checkout repository
