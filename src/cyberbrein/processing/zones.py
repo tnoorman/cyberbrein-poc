@@ -22,4 +22,3 @@ def match_approved_zone(
     if len(matches) > 1:
         return ZoneMatch(rejection_reason=ProcessingRejectionReason.AMBIGUOUS_ZONE)
     return ZoneMatch(zone_id=matches[0])
-

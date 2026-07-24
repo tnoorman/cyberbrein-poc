@@ -240,9 +240,7 @@ def _scored_finding_from_row(
         observation_count=row["observation_count"],
         first_observed_at_utc=_parse_datetime(row["first_observed_at_utc"]),
         last_observed_at_utc=_parse_datetime(row["last_observed_at_utc"]),
-        representative_observed_at_utc=_parse_datetime(
-            row["representative_observed_at_utc"]
-        ),
+        representative_observed_at_utc=_parse_datetime(row["representative_observed_at_utc"]),
         representative_latitude=row["representative_latitude"],
         representative_longitude=row["representative_longitude"],
         representative_rssi_dbm=row["representative_rssi_dbm"],

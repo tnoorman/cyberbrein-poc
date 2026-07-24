@@ -46,9 +46,7 @@ def _write_zones(path: Path) -> None:
                         "properties": {"zone_id": "zone-a"},
                         "geometry": {
                             "type": "Polygon",
-                            "coordinates": [
-                                [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]
-                            ],
+                            "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]],
                         },
                     }
                 ],
@@ -118,9 +116,7 @@ def test_cli_cleanup_removes_source_sidecars_and_secret(tmp_path: Path) -> None:
     for sidecar in sidecars:
         sidecar.touch()
 
-    exit_code = main(
-        [*_arguments(source, zones, secret, storage), "--delete-source-on-success"]
-    )
+    exit_code = main([*_arguments(source, zones, secret, storage), "--delete-source-on-success"])
 
     assert exit_code == 0
     assert not source.exists()

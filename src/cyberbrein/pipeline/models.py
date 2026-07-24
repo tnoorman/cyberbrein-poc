@@ -17,4 +17,3 @@ class PipelineResult:
     processing_rejected_count: int
     processing_rejection_reasons: dict[str, int]
     finding_count: int
-

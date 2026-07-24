@@ -47,4 +47,3 @@ def _band_for_frequency(frequency_mhz: int) -> str | None:
     if 5000 <= frequency_mhz < 5900:
         return "5GHz"
     return None
-

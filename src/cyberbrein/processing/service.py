@@ -61,4 +61,3 @@ class ProcessingService:
             rejected_observation_count=rejected_count,
             rejection_reasons=dict(sorted(rejection_reasons.items())),
         )
-
