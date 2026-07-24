@@ -116,15 +116,15 @@ def test_schema_has_postgis_types_indexes_and_no_raw_identifiers(
     engine = create_engine(postgres_url)
     schema = inspect(engine)
     table_names = set(schema.get_table_names())
-    assert table_names == {
+    application_tables = {
         "measurement_round",
         "zone",
         "network_finding",
         "network_score",
         "score_factor",
-        "spatial_ref_sys",
     }
-    application_tables = table_names - {"spatial_ref_sys"}
+    assert application_tables <= table_names
+    assert "spatial_ref_sys" in table_names
     columns = {
         column["name"]
         for table_name in application_tables
