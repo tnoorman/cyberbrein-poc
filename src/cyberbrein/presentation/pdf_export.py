@@ -1,10 +1,17 @@
+import math
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from io import BytesIO
 
+import requests
+from PIL import Image
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     Flowable,
     KeepTogether,
@@ -17,6 +24,10 @@ from reportlab.platypus import (
 
 from .map_view import MARKER_COLORS
 from .models import DashboardData, DashboardFilters
+
+TileFetcher = Callable[[str], bytes | None]
+TILE_SIZE = 256
+MAX_TILE_ZOOM = 20
 
 COLOR_TEXT = {
     "GREEN": "Groen – beperkte aandacht",
@@ -41,7 +52,12 @@ CATEGORY_TEXT = {
 }
 
 
-def generate_pdf(data: DashboardData, filters: DashboardFilters) -> bytes:
+def generate_pdf(
+    data: DashboardData,
+    filters: DashboardFilters,
+    *,
+    tile_fetcher: TileFetcher | None = None,
+) -> bytes:
     """Create a privacy-bounded in-memory PDF of the currently filtered dashboard."""
     output = BytesIO()
     document = SimpleDocTemplate(
@@ -73,10 +89,16 @@ def generate_pdf(data: DashboardData, filters: DashboardFilters) -> bytes:
         _summary_table(data),
         Spacer(1, 5 * mm),
         Paragraph("Kaartweergave", styles["Heading2"]),
-        _MapDrawing(data, width=170 * mm, height=90 * mm),
+        _MapDrawing(
+            data,
+            width=170 * mm,
+            height=90 * mm,
+            tile_fetcher=tile_fetcher or _fetch_tile,
+        ),
         Paragraph(
             "De posities zijn indicatieve netwerkvondsten binnen de meetcontext en bewijzen "
-            "niet waar een access point fysiek aanwezig is.",
+            "niet waar een access point fysiek aanwezig is. Kaartgegevens: "
+            "OpenStreetMap-bijdragers en CARTO.",
             styles["CenteredNote"],
         ),
         Spacer(1, 5 * mm),
@@ -197,11 +219,19 @@ def _filter_description(filters: DashboardFilters) -> str:
 
 
 class _MapDrawing(Flowable):
-    def __init__(self, data: DashboardData, *, width: float, height: float) -> None:
+    def __init__(
+        self,
+        data: DashboardData,
+        *,
+        width: float,
+        height: float,
+        tile_fetcher: TileFetcher,
+    ) -> None:
         super().__init__()
         self.data = data
         self.width = width
         self.height = height
+        self.tile_fetcher = tile_fetcher
 
     def draw(self) -> None:
         self.canv.setStrokeColor(colors.HexColor("#90a4ae"))
@@ -210,6 +240,25 @@ class _MapDrawing(Flowable):
         bounds = _map_bounds(self.data)
         if bounds is None:
             return
+        basemap = _build_basemap_image(
+            self.data,
+            self.tile_fetcher,
+            width=max(1, round(self.width * 2)),
+            height=max(1, round(self.height * 2)),
+        )
+        if basemap is not None:
+            image_buffer = BytesIO()
+            basemap.save(image_buffer, format="PNG")
+            image_buffer.seek(0)
+            self.canv.drawImage(
+                ImageReader(image_buffer),
+                0,
+                0,
+                width=self.width,
+                height=self.height,
+                preserveAspectRatio=False,
+                mask="auto",
+            )
         for zone in self.data.zones:
             geometries = (
                 zone.geometry.geoms
@@ -268,7 +317,114 @@ def _project(
     height: float,
 ) -> tuple[float, float]:
     min_x, min_y, max_x, max_y = bounds
+    left = _world_x(min_x)
+    right = _world_x(max_x)
+    top = _world_y(max_y)
+    bottom = _world_y(min_y)
     return (
-        (longitude - min_x) / (max_x - min_x) * width,
-        (latitude - min_y) / (max_y - min_y) * height,
+        (_world_x(longitude) - left) / (right - left) * width,
+        (bottom - _world_y(latitude)) / (bottom - top) * height,
     )
+
+
+def _build_basemap_image(
+    data: DashboardData,
+    tile_fetcher: TileFetcher,
+    *,
+    width: int,
+    height: int,
+) -> Image.Image | None:
+    bounds = _map_bounds(data)
+    if bounds is None:
+        return None
+    min_lon, min_lat, max_lon, max_lat = bounds
+    zoom = _tile_zoom(bounds, width, height)
+    world_size = TILE_SIZE * (2**zoom)
+    left = _world_x(min_lon) * world_size
+    right = _world_x(max_lon) * world_size
+    top = _world_y(max_lat) * world_size
+    bottom = _world_y(min_lat) * world_size
+    min_tile_x = math.floor(left / TILE_SIZE)
+    max_tile_x = math.floor((right - 1e-9) / TILE_SIZE)
+    min_tile_y = math.floor(top / TILE_SIZE)
+    max_tile_y = math.floor((bottom - 1e-9) / TILE_SIZE)
+    tile_coordinates = [
+        (tile_x, tile_y)
+        for tile_y in range(min_tile_y, max_tile_y + 1)
+        for tile_x in range(min_tile_x, max_tile_x + 1)
+    ]
+    urls = [_tile_url(zoom, tile_x, tile_y) for tile_x, tile_y in tile_coordinates]
+    with ThreadPoolExecutor(max_workers=min(8, len(urls))) as executor:
+        tile_bytes = tuple(executor.map(tile_fetcher, urls))
+    if any(content is None for content in tile_bytes):
+        return None
+
+    mosaic = Image.new(
+        "RGB",
+        (
+            (max_tile_x - min_tile_x + 1) * TILE_SIZE,
+            (max_tile_y - min_tile_y + 1) * TILE_SIZE,
+        ),
+        color="white",
+    )
+    try:
+        for (tile_x, tile_y), content in zip(tile_coordinates, tile_bytes, strict=True):
+            assert content is not None
+            with Image.open(BytesIO(content)) as tile:
+                mosaic.paste(
+                    tile.convert("RGB"),
+                    ((tile_x - min_tile_x) * TILE_SIZE, (tile_y - min_tile_y) * TILE_SIZE),
+                )
+        crop = mosaic.crop(
+            (
+                round(left - min_tile_x * TILE_SIZE),
+                round(top - min_tile_y * TILE_SIZE),
+                round(right - min_tile_x * TILE_SIZE),
+                round(bottom - min_tile_y * TILE_SIZE),
+            )
+        )
+        return crop.resize((width, height), Image.Resampling.LANCZOS)
+    except (OSError, ValueError):
+        return None
+
+
+def _tile_zoom(
+    bounds: tuple[float, float, float, float],
+    width: int,
+    height: int,
+) -> int:
+    min_lon, min_lat, max_lon, max_lat = bounds
+    chosen = 0
+    for zoom in range(MAX_TILE_ZOOM + 1):
+        world_size = TILE_SIZE * (2**zoom)
+        span_x = (_world_x(max_lon) - _world_x(min_lon)) * world_size
+        span_y = (_world_y(min_lat) - _world_y(max_lat)) * world_size
+        if span_x > width or span_y > height:
+            break
+        chosen = zoom
+    return chosen
+
+
+def _tile_url(zoom: int, tile_x: int, tile_y: int) -> str:
+    subdomain = "abcd"[(tile_x + tile_y) % 4]
+    return f"https://{subdomain}.basemaps.cartocdn.com/light_nolabels/{zoom}/{tile_x}/{tile_y}.png"
+
+
+@lru_cache(maxsize=256)
+def _fetch_tile(url: str) -> bytes | None:
+    try:
+        response = requests.get(url, timeout=3)
+        response.raise_for_status()
+        return response.content
+    except requests.RequestException:
+        return None
+
+
+def _world_x(longitude: float) -> float:
+    return (longitude + 180.0) / 360.0
+
+
+def _world_y(latitude: float) -> float:
+    clipped = min(max(latitude, -85.05112878), 85.05112878)
+    sine = math.sin(math.radians(clipped))
+    return 0.5 - math.log((1 + sine) / (1 - sine)) / (4 * math.pi)

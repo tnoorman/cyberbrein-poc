@@ -12,6 +12,7 @@ dependencies = [
     "geoalchemy2",
     "geopandas",
     "pandas",
+    "pillow",
     "plotly",
     "psycopg2-binary",
     "pyproj",
