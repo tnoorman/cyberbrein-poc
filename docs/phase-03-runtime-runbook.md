@@ -101,13 +101,25 @@ import sys
 with sqlite3.connect(sys.argv[1]) as connection:
     findings = connection.execute("SELECT COUNT(*) FROM network_findings").fetchone()[0]
     factors = connection.execute("SELECT COUNT(*) FROM score_factors").fetchone()[0]
+    invalid_scores = connection.execute("""
+        SELECT COUNT(*)
+        FROM network_findings
+        WHERE score NOT BETWEEN 0 AND 8
+           OR (score BETWEEN 0 AND 2 AND attention_level != 'GREEN')
+           OR (score BETWEEN 3 AND 5 AND attention_level != 'YELLOW')
+           OR (score BETWEEN 6 AND 8 AND attention_level != 'RED')
+    """).fetchone()[0]
 print("Netwerkvondsten:", findings)
 print("Scorefactoren:", factors)
+print("Drie factoren per vondst:", factors == findings * 3)
+print("Ongeldige score/kleur-combinaties:", invalid_scores)
 ' "$STORAGE_DB"
 ```
 
 Verwacht Storage-rechten `600`, een verwijderde bronbuffer en secret, en alleen numerieke
-opslagtellingen. Toon geen inhoudelijke rijen uit Storage tijdens de rooktest.
+opslagtellingen. `Drie factoren per vondst` moet `True` zijn en het aantal ongeldige
+score/kleur-combinaties moet `0` zijn. Toon geen inhoudelijke rijen uit Storage tijdens de
+rooktest.
 
 ## Fouten en herstel
 

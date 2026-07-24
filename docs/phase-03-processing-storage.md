@@ -34,15 +34,17 @@ een zone.
 Encryptie wordt voor aggregatie genormaliseerd naar één van:
 
 - `OPEN`;
-- `WEP`;
-- `WPA`;
+- `OUTDATED`;
 - `WPA2`;
 - `WPA3`;
+- `ENTERPRISE`;
 - `UNKNOWN`.
 
-Gemengde aanduidingen krijgen de sterkste herkende beveiligingscategorie. Onbekende of lege
-waarden worden `UNKNOWN`. Deze normalisatie beschrijft alleen wat in het frame is geadverteerd en
-is geen bewijs dat een configuratie veilig is.
+WPA1 en WEP vallen beide onder `OUTDATED` en vormen geen afzonderlijke scorecategorie. Enterprise
+wordt herkend aan Enterprise-, EAP- of 802.1X-aanduidingen. Gemengde aanduidingen krijgen de
+sterkste herkende beveiligingscategorie. Onbekende of lege waarden worden `UNKNOWN`. Deze
+normalisatie beschrijft alleen wat in het frame is geadverteerd en is geen bewijs dat een
+configuratie veilig is.
 
 Waarnemingen worden gegroepeerd op `(measurement_round_id, zone_id, network_id)`. Daardoor blijft
 zichtbaar dat hetzelfde gepseudonimiseerde netwerk in meerdere zones is waargenomen.
@@ -74,14 +76,30 @@ meetronde atomair, zodat een gedeeltelijke run niet als compleet resultaat zicht
 
 ## PoC-score
 
-De exposurescore loopt van 0 tot en met 100 en is de som van vier zichtbare factoren:
+De exposurescore volgt tabellen 20 tot en met 22 uit het afstudeerverslag. Iedere netwerkvondst
+heeft exact drie factoren met een bijdrage van 0, 1 of 2:
 
-- geadverteerde encryptie: `WPA3=0`, `WPA2=10`, `WPA=30`, `WEP=45`, `OPEN=50`,
-  `UNKNOWN=40`;
-- representatieve signaalsterkte: `30` punten vanaf -50 dBm, `20` vanaf -70 dBm en anders `10`;
-- aanwezige SSID: `10` punten, uitsluitend als zichtbaarheidsindicator;
-- herhaalde waarneming: `0` punten bij één waarneming, `5` bij 2-9 en `10` vanaf 10.
+- signaalsterkte, gewicht 1: RSSI onder -80 dBm geeft 0, -80 tot en met -67 dBm geeft 1 en
+  sterker dan -67 dBm geeft 2;
+- encryptietype, gewicht 2: WPA2, WPA3 of Enterprise geeft 0, verouderd of onbekend geeft 1 en
+  open geeft 2;
+- waarnemingsfrequentie, gewicht 1: één waarneming geeft 0, 2 tot en met 9 geeft 1 en 10 of meer
+  geeft 2.
 
-De score is een uitlegbare prioritering binnen deze PoC, geen bewijs dat een netwerk kwetsbaar is.
-De losse factoren worden samen met het totaal opgeslagen zodat Presentation de berekening kan
-uitleggen.
+De formule is:
+
+```text
+total_points =
+    (signal_contribution * 1)
+  + (encryption_contribution * 2)
+  + (frequency_contribution * 1)
+```
+
+De totaalscore loopt van 0 tot en met 8. Score 0-2 is groen, 3-5 is geel en 6-8 is rood. Storage
+bewaart per factor de bijdrage, weging en gewogen punten, plus totaalscore en kleur. De score is
+een uitlegbare prioritering binnen deze PoC en geen bewijs dat een netwerk kwetsbaar is.
+`ssid_present` blijft privacyveilige metadata, maar is nadrukkelijk geen scorefactor.
+
+De frequentiedrempels gelden voor de gestandaardiseerde hardwaretest van 60 seconden, kanalen
+36, 40, 44 en 48 en een dwell-tijd van één seconde. Runs met andere meetinstellingen zijn niet
+zonder meer scorematig vergelijkbaar.
