@@ -1,11 +1,20 @@
 import os
+import re
+from base64 import b64encode
 
 import streamlit as st
+import streamlit.components.v1 as components
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit_folium import st_folium
 
 from cyberbrein.presentation.map_view import build_map, findings_at_map_click
-from cyberbrein.presentation.models import DashboardFilters, FilterOptions, FindingView
+from cyberbrein.presentation.models import (
+    DashboardData,
+    DashboardFilters,
+    FilterOptions,
+    FindingView,
+)
+from cyberbrein.presentation.pdf_export import generate_pdf
 from cyberbrein.presentation.repository import PresentationRepository
 
 COLOR_LABELS = {
@@ -93,6 +102,7 @@ def main() -> None:
         if matching:
             selected = _select_coincident_finding(matching)
             _render_detail(selected)
+    _render_pdf_export(dashboard, filters)
 
 
 def _render_filters(options: FilterOptions) -> DashboardFilters:
@@ -164,6 +174,43 @@ def _render_detail(finding: FindingView) -> None:
         "Deze beoordeling gebruikt uitsluitend passief waargenomen metadata en is geen volledig "
         "beveiligingsoordeel."
     )
+
+
+def _render_pdf_export(dashboard: DashboardData, filters: DashboardFilters) -> None:
+    st.divider()
+    st.subheader("PDF-preview")
+    preview_key = (
+        dashboard.measurement_round.measurement_round_id,
+        dashboard.findings,
+        filters,
+    )
+    if st.button("Maak PDF-preview", type="primary"):
+        try:
+            st.session_state["pdf_preview"] = generate_pdf(dashboard, filters)
+            st.session_state["pdf_preview_key"] = preview_key
+        except Exception:
+            st.error(
+                "De PDF-preview kon niet veilig worden gemaakt; het dashboard blijft beschikbaar."
+            )
+    pdf_bytes = st.session_state.get("pdf_preview")
+    if pdf_bytes and st.session_state.get("pdf_preview_key") == preview_key:
+        encoded = b64encode(pdf_bytes).decode("ascii")
+        components.html(
+            f'<iframe src="data:application/pdf;base64,{encoded}" '
+            'width="100%" height="650" title="PDF-preview"></iframe>',
+            height=670,
+        )
+        safe_round_id = re.sub(
+            r"[^A-Za-z0-9._-]+",
+            "-",
+            dashboard.measurement_round.measurement_round_id,
+        )
+        st.download_button(
+            "Download PDF",
+            data=pdf_bytes,
+            file_name=f"cyberbrein-{safe_round_id}.pdf",
+            mime="application/pdf",
+        )
 
 
 if __name__ == "__main__":
