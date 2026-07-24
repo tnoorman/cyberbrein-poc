@@ -15,6 +15,7 @@ from cyberbrein.processing.models import (
 )
 from cyberbrein.storage.repository import (
     ActiveMeasurementRoundError,
+    MeasurementRoundNotFoundError,
     StorageRepository,
     measurement_rounds,
     network_findings,
@@ -95,6 +96,35 @@ def test_empty_round_retains_approved_zone(repository: StorageRepository) -> Non
     stored_zone = repository.load_zones("empty-round")
     assert [zone.zone_id for zone in stored_zone] == ["zone-a"]
     assert stored_zone[0].geometry.equals(_zone().geometry)
+
+
+def test_delete_measurement_round_cascades_and_verifies_all_tables(
+    repository: StorageRepository,
+) -> None:
+    repository.replace_measurement_round("synthetic-round", [_zone()], [_scored_finding()])
+
+    result = repository.delete_measurement_round("synthetic-round")
+
+    assert result.before.measurement_rounds == 1
+    assert result.before.zones == 1
+    assert result.before.network_findings == 1
+    assert result.before.network_scores == 1
+    assert result.before.score_factors == 3
+    assert result.after.all_zero
+
+    replacement = _scored_finding(
+        measurement_round_id="replacement-round",
+        network_id="replacement-network",
+    )
+    repository.replace_measurement_round("replacement-round", [_zone()], [replacement])
+    assert repository.load_measurement_round("replacement-round") == (replacement,)
+
+
+def test_delete_unknown_measurement_round_is_not_reported_as_success(
+    repository: StorageRepository,
+) -> None:
+    with pytest.raises(MeasurementRoundNotFoundError):
+        repository.delete_measurement_round("missing-round")
 
 
 def test_invalid_replacement_leaves_existing_round_unchanged(
