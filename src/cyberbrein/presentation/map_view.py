@@ -13,6 +13,7 @@ MARKER_COLORS = {
     "YELLOW": "#f9a825",
     "RED": "#c62828",
 }
+SELECTION_PREFIX = "Selecteer netwerkvondst "
 
 
 def build_map(data: DashboardData) -> folium.Map:
@@ -58,7 +59,7 @@ def build_map(data: DashboardData) -> folium.Map:
             "maxClusterRadius": 35,
         },
     ).add_to(map_view)
-    for finding in data.findings:
+    for position, finding in enumerate(data.findings, start=1):
         color = MARKER_COLORS[finding.score_color]
         folium.Marker(
             location=(finding.latitude, finding.longitude),
@@ -72,7 +73,7 @@ def build_map(data: DashboardData) -> folium.Map:
                     'box-shadow:0 1px 3px rgba(0,0,0,.45)"></span>'
                 ),
             ),
-            tooltip="Selecteer netwerkvondst",
+            tooltip=f"{SELECTION_PREFIX}{position}",
         ).add_to(marker_cluster)
     if bounds is not None:
         map_view.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
@@ -91,6 +92,21 @@ def findings_at_map_click(
         if abs(finding.latitude - latitude) <= tolerance
         and abs(finding.longitude - longitude) <= tolerance
     )
+
+
+def finding_from_selection_label(
+    findings: tuple[FindingView, ...],
+    label: str | None,
+) -> FindingView | None:
+    if not label or not label.startswith(SELECTION_PREFIX):
+        return None
+    try:
+        position = int(label.removeprefix(SELECTION_PREFIX))
+    except ValueError:
+        return None
+    if not 1 <= position <= len(findings):
+        return None
+    return findings[position - 1]
 
 
 def _bounds(data: DashboardData) -> tuple[float, float, float, float] | None:

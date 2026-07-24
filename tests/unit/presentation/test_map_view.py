@@ -2,7 +2,11 @@ from datetime import datetime, timezone
 
 from shapely.geometry import Polygon
 
-from cyberbrein.presentation.map_view import build_map, findings_at_map_click
+from cyberbrein.presentation.map_view import (
+    build_map,
+    finding_from_selection_label,
+    findings_at_map_click,
+)
 from cyberbrein.presentation.models import (
     DashboardData,
     FactorView,
@@ -73,7 +77,7 @@ def test_map_has_label_free_roads_without_network_identifier() -> None:
     assert "CARTO" in rendered
     assert "private-pseudonym" not in rendered
     assert "#f9a825" in rendered
-    assert "Selecteer netwerkvondst" in rendered
+    assert "Selecteer netwerkvondst 1" in rendered
 
 
 def test_map_clusters_and_spiderfies_overlapping_markers() -> None:
@@ -88,3 +92,12 @@ def test_map_click_resolves_finding_without_exposing_it_in_marker() -> None:
     finding = _finding()
     assert findings_at_map_click((finding,), 52.0, 5.0) == (finding,)
     assert findings_at_map_click((finding,), 52.1, 5.0) == ()
+
+
+def test_unique_selection_label_resolves_finding_after_spiderfy() -> None:
+    first = _finding("first-private-pseudonym")
+    second = _finding("second-private-pseudonym")
+    findings = (first, second)
+    assert finding_from_selection_label(findings, "Selecteer netwerkvondst 2") == second
+    assert finding_from_selection_label(findings, "Selecteer netwerkvondst 3") is None
+    assert finding_from_selection_label(findings, "Selecteer netwerkvondst") is None
