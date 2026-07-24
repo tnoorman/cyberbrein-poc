@@ -1,13 +1,15 @@
 import os
 import re
-from base64 import b64encode
 
 import streamlit as st
-import streamlit.components.v1 as components
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit_folium import st_folium
 
-from cyberbrein.presentation.map_view import build_map, findings_at_map_click
+from cyberbrein.presentation.map_view import (
+    build_map,
+    finding_from_selection_label,
+    findings_at_map_click,
+)
 from cyberbrein.presentation.models import (
     DashboardData,
     DashboardFilters,
@@ -83,7 +85,7 @@ def main() -> None:
         build_map(dashboard),
         height=570,
         use_container_width=True,
-        returned_objects=["last_object_clicked"],
+        returned_objects=["last_object_clicked", "last_object_clicked_tooltip"],
         key=f"map-{selected_round}-{hash(filters)}",
     )
     st.caption(
@@ -91,17 +93,31 @@ def main() -> None:
         "Ze bewijzen niet waar een access point fysiek aanwezig is."
     )
 
+    selected = finding_from_selection_label(
+        dashboard.findings,
+        map_result.get("last_object_clicked_tooltip") if map_result else None,
+    )
     clicked = map_result.get("last_object_clicked") if map_result else None
-    if clicked:
+    if selected is None and clicked:
         matching = findings_at_map_click(
             dashboard.findings,
             latitude=float(clicked["lat"]),
             longitude=float(clicked["lng"]),
             tolerance=1e-6,
         )
-        if matching:
-            selected = _select_coincident_finding(matching)
-            _render_detail(selected)
+        if len(matching) == 1:
+            selected = matching[0]
+    if selected is not None:
+        st.session_state["selected_network_id"] = selected.network_id
+
+    selected_network_id = st.session_state.get("selected_network_id")
+    selected = next(
+        (finding for finding in dashboard.findings if finding.network_id == selected_network_id),
+        None,
+    )
+    if selected is not None:
+        st.success("Netwerkvondst geselecteerd. De details staan direct hieronder.")
+        _render_detail(selected)
     _render_pdf_export(dashboard, filters)
 
 
@@ -127,16 +143,6 @@ def _render_filters(options: FilterOptions) -> DashboardFilters:
         encryptions=frozenset(encryptions),
         score_colors=frozenset(score_colors),
         signal_categories=frozenset(signal_categories),
-    )
-
-
-def _select_coincident_finding(findings: tuple[FindingView, ...]) -> FindingView:
-    if len(findings) == 1:
-        return findings[0]
-    return st.selectbox(
-        "Meerdere vondsten op dit indicatieve punt",
-        findings,
-        format_func=lambda item: item.network_id,
     )
 
 
@@ -194,12 +200,7 @@ def _render_pdf_export(dashboard: DashboardData, filters: DashboardFilters) -> N
             )
     pdf_bytes = st.session_state.get("pdf_preview")
     if pdf_bytes and st.session_state.get("pdf_preview_key") == preview_key:
-        encoded = b64encode(pdf_bytes).decode("ascii")
-        components.html(
-            f'<iframe src="data:application/pdf;base64,{encoded}" '
-            'width="100%" height="650" title="PDF-preview"></iframe>',
-            height=670,
-        )
+        st.pdf(pdf_bytes, height=650)
         safe_round_id = re.sub(
             r"[^A-Za-z0-9._-]+",
             "-",

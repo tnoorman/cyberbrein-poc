@@ -99,10 +99,15 @@ export CYBERBREIN_DATABASE_URL="postgresql+psycopg2:///cyberbrein_poc"
 
 Open daarna lokaal `http://127.0.0.1:8501`. Stop het dashboard met `Ctrl+C`.
 
-De kaart gebruikt geen ondergrond met labels, bedrijfsnamen of adressen. Filters zijn beschikbaar
-voor zone, band, kanaal, encryptietype, scorekleur en signaalklasse. Een pseudonieme netwerk-ID en
-de scorefactoren verschijnen pas na bewuste selectie van een bolletje. Numerieke coördinaten worden
-niet getoond.
+De kaart gebruikt CARTO Light zonder labels, met wegen uit OpenStreetMap maar zonder straatnamen,
+bedrijfsnamen of adressen. De browser vraagt de zichtbare kaarttegels rechtstreeks bij CARTO op;
+meetdata en netwerk-ID's worden niet aan de tegelprovider doorgegeven. Dicht bij elkaar liggende
+vondsten worden bij uitzoomen geclusterd. Exact overlappende vondsten waaieren bij selectie tijdelijk
+uit, zonder opgeslagen displaypunten te veranderen.
+
+Filters zijn beschikbaar voor zone, band, kanaal, encryptietype, scorekleur en signaalklasse. Een
+pseudonieme netwerk-ID en de scorefactoren verschijnen pas na bewuste selectie van een bolletje.
+Numerieke coördinaten worden niet getoond.
 
 ## PDF-preview
 

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from time import monotonic
 
+from PIL import Image
 from pypdf import PdfReader
 from shapely.geometry import Polygon
 
@@ -14,7 +15,11 @@ from cyberbrein.presentation.models import (
     MeasurementRoundSummary,
     ZoneView,
 )
-from cyberbrein.presentation.pdf_export import generate_pdf
+from cyberbrein.presentation.pdf_export import _build_basemap_image, generate_pdf
+
+
+def no_tiles(_url: str) -> None:
+    return None
 
 
 def _dashboard(findings: tuple[FindingView, ...] | None = None) -> DashboardData:
@@ -78,7 +83,7 @@ def test_pdf_matches_active_filters_and_contains_explainable_result() -> None:
         score_colors=frozenset({"YELLOW"}),
     )
     started = monotonic()
-    pdf = generate_pdf(_dashboard(), filters)
+    pdf = generate_pdf(_dashboard(), filters, tile_fetcher=no_tiles)
     elapsed = monotonic() - started
     text = _text(pdf)
 
@@ -95,7 +100,7 @@ def test_pdf_matches_active_filters_and_contains_explainable_result() -> None:
 
 
 def test_pdf_excludes_identifiers_and_numeric_coordinates() -> None:
-    text = _text(generate_pdf(_dashboard(), DashboardFilters()))
+    text = _text(generate_pdf(_dashboard(), DashboardFilters(), tile_fetcher=no_tiles))
     assert "pseudonym-must-not-be-exported" not in text
     assert "52.123456" not in text
     assert "5.123456" not in text
@@ -104,5 +109,30 @@ def test_pdf_excludes_identifiers_and_numeric_coordinates() -> None:
 
 
 def test_empty_filtered_result_generates_explanatory_pdf() -> None:
-    pdf = generate_pdf(_dashboard(findings=()), DashboardFilters())
+    pdf = generate_pdf(
+        _dashboard(findings=()),
+        DashboardFilters(),
+        tile_fetcher=no_tiles,
+    )
     assert "geen netwerkvondsten beschikbaar" in _text(pdf)
+
+
+def test_pdf_basemap_stitches_label_free_road_tiles() -> None:
+    tile_buffer = BytesIO()
+    Image.new("RGB", (256, 256), "#dde7ed").save(tile_buffer, format="PNG")
+    requested_urls: list[str] = []
+
+    def fetch_tile(url: str) -> bytes:
+        requested_urls.append(url)
+        return tile_buffer.getvalue()
+
+    image = _build_basemap_image(_dashboard(), fetch_tile, width=600, height=320)
+
+    assert image is not None
+    assert image.size == (600, 320)
+    assert requested_urls
+    assert all("light_nolabels" in url for url in requested_urls)
+
+
+def test_pdf_basemap_falls_back_when_tiles_are_unavailable() -> None:
+    assert _build_basemap_image(_dashboard(), no_tiles, width=600, height=320) is None
