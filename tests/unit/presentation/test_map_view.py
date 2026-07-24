@@ -66,12 +66,22 @@ def _dashboard() -> DashboardData:
     )
 
 
-def test_map_has_no_basemap_labels_or_network_identifier() -> None:
+def test_map_has_label_free_roads_without_network_identifier() -> None:
     rendered = build_map(_dashboard()).get_root().render()
-    assert "tileLayer" not in rendered
+    assert "light_nolabels" in rendered
+    assert "OpenStreetMap" in rendered
+    assert "CARTO" in rendered
     assert "private-pseudonym" not in rendered
     assert "#f9a825" in rendered
     assert "Selecteer netwerkvondst" in rendered
+
+
+def test_map_clusters_and_spiderfies_overlapping_markers() -> None:
+    rendered = build_map(_dashboard()).get_root().render()
+    assert "markerClusterGroup" in rendered
+    assert '"spiderfyOnMaxZoom": true' in rendered
+    assert '"maxClusterRadius": 35' in rendered
+    assert "cyberbrein-finding-marker" in rendered
 
 
 def test_map_click_resolves_finding_without_exposing_it_in_marker() -> None:

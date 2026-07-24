@@ -1,9 +1,7 @@
 import os
 import re
-from base64 import b64encode
 
 import streamlit as st
-import streamlit.components.v1 as components
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit_folium import st_folium
 
@@ -194,12 +192,7 @@ def _render_pdf_export(dashboard: DashboardData, filters: DashboardFilters) -> N
             )
     pdf_bytes = st.session_state.get("pdf_preview")
     if pdf_bytes and st.session_state.get("pdf_preview_key") == preview_key:
-        encoded = b64encode(pdf_bytes).decode("ascii")
-        components.html(
-            f'<iframe src="data:application/pdf;base64,{encoded}" '
-            'width="100%" height="650" title="PDF-preview"></iframe>',
-            height=670,
-        )
+        st.pdf(pdf_bytes, height=650)
         safe_round_id = re.sub(
             r"[^A-Za-z0-9._-]+",
             "-",

@@ -1,7 +1,13 @@
 import folium
+from folium.plugins import MarkerCluster
 
 from .models import DashboardData, FindingView
 
+LABEL_FREE_TILE_URL = "https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
+TILE_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+    'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+)
 MARKER_COLORS = {
     "GREEN": "#2e7d32",
     "YELLOW": "#f9a825",
@@ -10,7 +16,7 @@ MARKER_COLORS = {
 
 
 def build_map(data: DashboardData) -> folium.Map:
-    """Build a label-free map without embedding network identifiers."""
+    """Build a label-free road map without embedding network identifiers."""
     bounds = _bounds(data)
     center = (
         ((bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2)
@@ -24,6 +30,13 @@ def build_map(data: DashboardData) -> folium.Map:
         control_scale=True,
         prefer_canvas=True,
     )
+    folium.TileLayer(
+        tiles=LABEL_FREE_TILE_URL,
+        attr=TILE_ATTRIBUTION,
+        name="Wegen zonder labels",
+        max_zoom=20,
+        subdomains="abcd",
+    ).add_to(map_view)
     for zone in data.zones:
         folium.GeoJson(
             zone.geometry.__geo_interface__,
@@ -34,17 +47,33 @@ def build_map(data: DashboardData) -> folium.Map:
                 "fillOpacity": 0.25,
             },
         ).add_to(map_view)
+    marker_cluster = MarkerCluster(
+        name="Netwerkvondsten",
+        overlay=True,
+        control=False,
+        options={
+            "showCoverageOnHover": False,
+            "spiderfyOnMaxZoom": True,
+            "spiderfyDistanceMultiplier": 1.5,
+            "maxClusterRadius": 35,
+        },
+    ).add_to(map_view)
     for finding in data.findings:
-        folium.CircleMarker(
+        color = MARKER_COLORS[finding.score_color]
+        folium.Marker(
             location=(finding.latitude, finding.longitude),
-            radius=7,
-            color="#ffffff",
-            weight=1,
-            fill=True,
-            fill_color=MARKER_COLORS[finding.score_color],
-            fill_opacity=0.95,
+            icon=folium.DivIcon(
+                icon_size=(16, 16),
+                icon_anchor=(8, 8),
+                class_name="cyberbrein-finding-marker",
+                html=(
+                    '<span aria-hidden="true" style="display:block;width:16px;height:16px;'
+                    f"border-radius:50%;background:{color};border:2px solid #fff;"
+                    'box-shadow:0 1px 3px rgba(0,0,0,.45)"></span>'
+                ),
+            ),
             tooltip="Selecteer netwerkvondst",
-        ).add_to(map_view)
+        ).add_to(marker_cluster)
     if bounds is not None:
         map_view.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
     return map_view
