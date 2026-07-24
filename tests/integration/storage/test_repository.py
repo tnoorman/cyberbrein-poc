@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import create_engine, inspect, select
 
 from cyberbrein.processing.models import (
+    AttentionLevel,
     EncryptionCategory,
     NetworkFinding,
     ScoredNetworkFinding,
@@ -40,8 +41,12 @@ def _scored_finding(**changes: object) -> ScoredNetworkFinding:
     )
     finding_changes = {key: value for key, value in changes.items() if hasattr(finding, key)}
     finding = replace(finding, **finding_changes)
-    factors = (ScoreFactor("encryption", 10), ScoreFactor("signal_strength", 20))
-    return ScoredNetworkFinding(finding, 30, factors)
+    factors = (
+        ScoreFactor("signal_strength", contribution=1, weight=1),
+        ScoreFactor("encryption", contribution=1, weight=2),
+        ScoreFactor("observation_frequency", contribution=0, weight=1),
+    )
+    return ScoredNetworkFinding(finding, 3, AttentionLevel.YELLOW, factors)
 
 
 @pytest.fixture
@@ -109,6 +114,35 @@ def test_schema_contains_no_raw_identifiers_or_secret(
     assert {measurement_rounds.name, network_findings.name, score_factors.name} == set(
         schema.get_table_names()
     )
+    engine.dispose()
+
+
+def test_schema_stores_explainable_score_components(
+    repository: tuple[StorageRepository, Path],
+) -> None:
+    instance, database_path = repository
+    instance.replace_measurement_round("synthetic-round", [_scored_finding()])
+    engine = create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        finding = connection.execute(select(network_findings)).mappings().one()
+        factors = connection.execute(
+            select(score_factors).order_by(score_factors.c.position)
+        ).mappings()
+        assert finding["score"] == 3
+        assert finding["attention_level"] == "YELLOW"
+        assert [
+            (
+                factor["name"],
+                factor["contribution"],
+                factor["weight"],
+                factor["weighted_points"],
+            )
+            for factor in factors
+        ] == [
+            ("signal_strength", 1, 1, 1),
+            ("encryption", 1, 2, 2),
+            ("observation_frequency", 0, 1, 0),
+        ]
     engine.dispose()
 
 

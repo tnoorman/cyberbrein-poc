@@ -105,9 +105,13 @@ class ScoreFactor:
     weight: int
 
     def __post_init__(self) -> None:
-        if self.contribution not in {0, 1, 2}:
+        if (
+            not isinstance(self.contribution, int)
+            or isinstance(self.contribution, bool)
+            or self.contribution not in {0, 1, 2}
+        ):
             raise ValueError("score factor contribution must be 0, 1, or 2")
-        if self.weight <= 0:
+        if not isinstance(self.weight, int) or isinstance(self.weight, bool) or self.weight <= 0:
             raise ValueError("score factor weight must be positive")
 
     @property
@@ -123,6 +127,13 @@ class ScoredNetworkFinding:
     score_factors: tuple[ScoreFactor, ...]
 
     def __post_init__(self) -> None:
+        factor_names = {factor.name for factor in self.score_factors}
+        if len(self.score_factors) != 3 or factor_names != {
+            "signal_strength",
+            "encryption",
+            "observation_frequency",
+        }:
+            raise ValueError("exactly the three report-defined score factors are required")
         if not 0 <= self.score <= 8:
             raise ValueError("score must be between 0 and 8")
         if self.score != sum(factor.weighted_points for factor in self.score_factors):

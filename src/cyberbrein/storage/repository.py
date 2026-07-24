@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.engine import Engine, make_url
 
 from cyberbrein.processing.models import (
+    AttentionLevel,
     EncryptionCategory,
     NetworkFinding,
     ScoredNetworkFinding,
@@ -60,6 +61,7 @@ network_findings = Table(
     Column("encryption", String, nullable=False),
     Column("ssid_present", Boolean, nullable=False),
     Column("score", Integer, nullable=False),
+    Column("attention_level", String, nullable=False),
 )
 
 score_factors = Table(
@@ -70,7 +72,9 @@ score_factors = Table(
     Column("network_id", String, primary_key=True),
     Column("name", String, primary_key=True),
     Column("position", Integer, nullable=False),
-    Column("points", Integer, nullable=False),
+    Column("contribution", Integer, nullable=False),
+    Column("weight", Integer, nullable=False),
+    Column("weighted_points", Integer, nullable=False),
     ForeignKeyConstraint(
         ["measurement_round_id", "zone_id", "network_id"],
         [
@@ -145,7 +149,11 @@ class StorageRepository:
                     .order_by(score_factors.c.position)
                 ).mappings()
                 factors = tuple(
-                    ScoreFactor(name=factor["name"], points=factor["points"])
+                    ScoreFactor(
+                        name=factor["name"],
+                        contribution=factor["contribution"],
+                        weight=factor["weight"],
+                    )
                     for factor in factor_rows
                 )
                 loaded.append(_scored_finding_from_row(row, factors))
@@ -200,6 +208,7 @@ def _finding_values(scored: ScoredNetworkFinding) -> dict[str, object]:
         "encryption": finding.encryption.value,
         "ssid_present": finding.ssid_present,
         "score": scored.score,
+        "attention_level": scored.attention_level.value,
     }
 
 
@@ -212,7 +221,9 @@ def _factor_values(scored: ScoredNetworkFinding) -> list[dict[str, object]]:
             "network_id": finding.network_id,
             "name": factor.name,
             "position": position,
-            "points": factor.points,
+            "contribution": factor.contribution,
+            "weight": factor.weight,
+            "weighted_points": factor.weighted_points,
         }
         for position, factor in enumerate(scored.score_factors)
     ]
@@ -241,7 +252,12 @@ def _scored_finding_from_row(
         encryption=EncryptionCategory(row["encryption"]),
         ssid_present=row["ssid_present"],
     )
-    return ScoredNetworkFinding(finding=finding, score=row["score"], score_factors=factors)
+    return ScoredNetworkFinding(
+        finding=finding,
+        score=row["score"],
+        attention_level=AttentionLevel(row["attention_level"]),
+        score_factors=factors,
+    )
 
 
 def _parse_datetime(value: str) -> datetime:
