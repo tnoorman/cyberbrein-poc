@@ -10,11 +10,17 @@ from cyberbrein.ingestion.models import AcceptedObservation
 
 class EncryptionCategory(StrEnum):
     OPEN = "OPEN"
-    WEP = "WEP"
-    WPA = "WPA"
+    OUTDATED = "OUTDATED"
     WPA2 = "WPA2"
     WPA3 = "WPA3"
+    ENTERPRISE = "ENTERPRISE"
     UNKNOWN = "UNKNOWN"
+
+
+class AttentionLevel(StrEnum):
+    GREEN = "GREEN"
+    YELLOW = "YELLOW"
+    RED = "RED"
 
 
 class ProcessingRejectionReason(StrEnum):
@@ -95,20 +101,44 @@ class NetworkFinding:
 @dataclass(frozen=True, slots=True)
 class ScoreFactor:
     name: str
-    points: int
+    contribution: int
+    weight: int
+
+    def __post_init__(self) -> None:
+        if self.contribution not in {0, 1, 2}:
+            raise ValueError("score factor contribution must be 0, 1, or 2")
+        if self.weight <= 0:
+            raise ValueError("score factor weight must be positive")
+
+    @property
+    def weighted_points(self) -> int:
+        return self.contribution * self.weight
 
 
 @dataclass(frozen=True, slots=True)
 class ScoredNetworkFinding:
     finding: NetworkFinding
     score: int
+    attention_level: AttentionLevel
     score_factors: tuple[ScoreFactor, ...]
 
     def __post_init__(self) -> None:
-        if not 0 <= self.score <= 100:
-            raise ValueError("score must be between 0 and 100")
-        if self.score != sum(factor.points for factor in self.score_factors):
+        if not 0 <= self.score <= 8:
+            raise ValueError("score must be between 0 and 8")
+        if self.score != sum(factor.weighted_points for factor in self.score_factors):
             raise ValueError("score must equal the sum of its factors")
+        if self.attention_level is not attention_level_for_score(self.score):
+            raise ValueError("attention level must match the score")
+
+
+def attention_level_for_score(score: int) -> AttentionLevel:
+    if 0 <= score <= 2:
+        return AttentionLevel.GREEN
+    if score <= 5:
+        return AttentionLevel.YELLOW
+    if score <= 8:
+        return AttentionLevel.RED
+    raise ValueError("score must be between 0 and 8")
 
 
 @dataclass(frozen=True, slots=True)

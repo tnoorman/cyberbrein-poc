@@ -60,7 +60,8 @@ def test_service_runs_quality_zone_normalization_aggregation_and_scoring() -> No
     assert scored.finding.observation_count == 2
     assert scored.finding.representative_rssi_dbm == -40
     assert scored.finding.encryption is EncryptionCategory.OPEN
-    assert scored.score == sum(factor.points for factor in scored.score_factors)
+    assert scored.score == sum(factor.weighted_points for factor in scored.score_factors)
+    assert len(scored.score_factors) == 3
 
 
 def test_service_accepts_a_generator_and_empty_result() -> None:

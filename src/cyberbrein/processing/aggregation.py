@@ -4,11 +4,11 @@ from collections.abc import Iterable
 from cyberbrein.processing.models import EncryptionCategory, NetworkFinding, ZonedObservation
 
 _ENCRYPTION_STRENGTH = {
-    EncryptionCategory.UNKNOWN: 0,
-    EncryptionCategory.OPEN: 1,
-    EncryptionCategory.WEP: 2,
-    EncryptionCategory.WPA: 3,
-    EncryptionCategory.WPA2: 4,
+    EncryptionCategory.OPEN: 0,
+    EncryptionCategory.UNKNOWN: 1,
+    EncryptionCategory.OUTDATED: 2,
+    EncryptionCategory.WPA2: 3,
+    EncryptionCategory.ENTERPRISE: 4,
     EncryptionCategory.WPA3: 5,
 }
 
@@ -72,4 +72,3 @@ def _representative_key(item: ZonedObservation) -> tuple[object, ...]:
         observation.band,
         item.encryption.value,
     )
-

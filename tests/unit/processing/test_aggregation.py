@@ -64,10 +64,10 @@ def test_weakest_encryption_is_retained_conservatively() -> None:
     finding = aggregate_network_findings(
         [
             _zoned(_observation(), encryption=EncryptionCategory.WPA3),
-            _zoned(_observation(), encryption=EncryptionCategory.WPA),
+            _zoned(_observation(), encryption=EncryptionCategory.OUTDATED),
         ]
     )[0]
-    assert finding.encryption is EncryptionCategory.WPA
+    assert finding.encryption is EncryptionCategory.OUTDATED
 
 
 def test_equal_signal_uses_earliest_observation_independent_of_input_order() -> None:
