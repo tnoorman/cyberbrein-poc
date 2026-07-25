@@ -12,7 +12,7 @@
 - Het activiteitenlog krijgt rechten `600` en bevat geen meetronde-ID of fouttekst.
 - De Streamlit-test bevestigt dat expliciete toestemming verplicht is, de verwijdering daarna wordt
   uitgevoerd en de lege-datamelding verschijnt.
-- Ruff-format en Ruff-lint zijn groen; alle 195 tests slagen.
+- Ruff-format en Ruff-lint zijn groen; de actuele volledige suite van 202 tests slaagt.
 
 ## Privacy- en opslaggrenzen
 
@@ -21,9 +21,21 @@ PDF-export geen permanent bestand; de preview staat alleen in Streamlit-sessiege
 verwijdering gewist. Een reeds gedownloade PDF valt buiten de serveropslag en blijft onder beheer
 van de gebruiker.
 
-## Handmatig acceptatiepunt
+## Handmatige AT-06-acceptatie
 
-De bestaande functionele runtime-meetronde is tijdens implementatie niet verwijderd. Daardoor
-blijft zij beschikbaar voor de visuele fase-6-acceptatie. De definitieve AT-06-test wordt na de
-nieuwe buitenmeting uitgevoerd: eerst dashboard en PDF beoordelen, daarna bewust verwijderen en de
-controlequery plus het activiteitenlog controleren.
+Na de functionele dashboard- en PDF-beoordeling is de runtime-meetronde via de bevestigingsdialog
+verwijderd. Het privacyveilige activiteitenlog registreerde status `SUCCEEDED` met:
+
+- 18 verwijderde netwerkvondsten;
+- 18 verwijderde scores;
+- 54 verwijderde scorefactoren;
+- 1 verwijderde zonesnapshot;
+- `verification_remaining` met waarde `0`.
+
+Een afzonderlijke databasecontrole bevestigde daarna nul meetronden, nul netwerkvondsten en nul
+scorefactoren. Daarmee is AT-06 voor deze functionele meetronde geslaagd.
+
+Na de succesvolle verwijdering verscheen bij de overgang vanuit een eerder geopende PDF-preview
+een Streamlit-fout doordat twee dialogstatussen tegelijk actief bleven. Dit had geen invloed op de
+verwijderactie of nacontrole. De UI is daarna aangepast naar één exclusieve `active_dialog`-status
+en de overgang PDF-preview naar verwijdermodal is als regressietest toegevoegd.
