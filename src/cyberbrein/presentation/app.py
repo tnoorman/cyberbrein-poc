@@ -117,7 +117,10 @@ def main() -> None:
     _render_overview_header()
     _render_metrics(dashboard)
 
-    context, filter_action, delete_action = st.columns([4, 1, 1], vertical_alignment="center")
+    context, filter_action, pdf_action, delete_action = st.columns(
+        [3, 1, 1, 1],
+        vertical_alignment="center",
+    )
     zone_label = ", ".join(zone.zone_id for zone in unfiltered.zones)
     context.markdown(
         f'<div class="cb-context"><strong>{zone_label}</strong> · gemeten gebied</div>',
@@ -130,6 +133,10 @@ def main() -> None:
             options=unfiltered.filter_options,
             filters=filters,
         )
+    if pdf_action.button("Exporteer PDF", type="secondary", width="stretch"):
+        st.session_state["show_pdf_dialog"] = True
+    if st.session_state.get("show_pdf_dialog"):
+        _render_pdf_dialog(dashboard, filters)
     if delete_action.button("Meetdata verwijderen", type="secondary", width="stretch"):
         st.session_state["show_delete_dialog"] = True
     if st.session_state.get("show_delete_dialog"):
@@ -172,7 +179,6 @@ def main() -> None:
     if selected is not None:
         st.session_state["selected_network_id"] = selected.network_id
         st.rerun()
-    _render_pdf_export(dashboard, filters)
 
 
 @st.dialog("Meetdata verwijderen na inzichtverstrekking")
@@ -255,6 +261,7 @@ def _clear_deleted_round_state(
         "selected_network_id",
         "pdf_preview",
         "pdf_preview_key",
+        "show_pdf_dialog",
         "show_delete_dialog",
         f"confirm_delete_{measurement_round_id}",
     ):
@@ -352,7 +359,12 @@ def _active_filter_count(filters: DashboardFilters) -> int:
 
 
 def _clear_result_state(state: MutableMapping[str, Any]) -> None:
-    for key in ("selected_network_id", "pdf_preview", "pdf_preview_key"):
+    for key in (
+        "selected_network_id",
+        "pdf_preview",
+        "pdf_preview_key",
+        "show_pdf_dialog",
+    ):
         state.pop(key, None)
 
 
@@ -450,24 +462,26 @@ def _frequency_label(frequency_mhz: int | None) -> str:
     return f"{frequency_mhz} MHz" if frequency_mhz is not None else "Onbekend"
 
 
-def _render_pdf_export(dashboard: DashboardData, filters: DashboardFilters) -> None:
-    st.divider()
-    st.subheader("PDF-preview")
+@st.dialog("PDF-export", width="large")
+def _render_pdf_dialog(dashboard: DashboardData, filters: DashboardFilters) -> None:
+    st.caption("Voorbeeld vóór opslaan")
     preview_key = (
         dashboard.measurement_round.measurement_round_id,
         dashboard.findings,
         filters,
     )
-    if st.button("Maak PDF-preview", type="primary"):
+    if st.session_state.get("pdf_preview_key") != preview_key:
         try:
-            st.session_state["pdf_preview"] = generate_pdf(dashboard, filters)
+            with st.spinner("PDF-preview maken…"):
+                st.session_state["pdf_preview"] = generate_pdf(dashboard, filters)
             st.session_state["pdf_preview_key"] = preview_key
         except Exception:
             st.error(
                 "De PDF-preview kon niet veilig worden gemaakt; het dashboard blijft beschikbaar."
             )
+            return
     pdf_bytes = st.session_state.get("pdf_preview")
-    if pdf_bytes and st.session_state.get("pdf_preview_key") == preview_key:
+    if pdf_bytes:
         st.pdf(pdf_bytes, height=650)
         safe_round_id = re.sub(
             r"[^A-Za-z0-9._-]+",
@@ -479,6 +493,8 @@ def _render_pdf_export(dashboard: DashboardData, filters: DashboardFilters) -> N
             data=pdf_bytes,
             file_name=f"cyberbrein-{safe_round_id}.pdf",
             mime="application/pdf",
+            type="primary",
+            width="stretch",
         )
 
 

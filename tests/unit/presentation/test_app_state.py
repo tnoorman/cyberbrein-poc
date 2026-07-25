@@ -13,6 +13,7 @@ def test_deleted_round_state_discards_selection_pdf_and_confirmation() -> None:
         "selected_network_id": "private-network-id",
         "pdf_preview": b"private-pdf",
         "pdf_preview_key": ("round-a",),
+        "show_pdf_dialog": True,
         "show_delete_dialog": True,
         "confirm_delete_round-a": True,
         "unrelated": "preserved",
@@ -38,6 +39,7 @@ def test_filter_change_discards_stale_result_state() -> None:
         "selected_network_id": "private-network-id",
         "pdf_preview": b"private-pdf",
         "pdf_preview_key": ("round-a",),
+        "show_pdf_dialog": True,
         "applied_filters": DashboardFilters(),
     }
 

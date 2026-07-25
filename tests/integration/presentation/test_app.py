@@ -112,3 +112,25 @@ def test_selected_finding_opens_dedicated_explainable_detail(
     ]
     assert any(button.label == "← Terug naar overzicht" for button in app.button)
     assert not app.dataframe
+
+
+def test_pdf_action_opens_preview_with_download(
+    clean_postgis: str,
+    monkeypatch,
+) -> None:
+    storage = StorageRepository(clean_postgis)
+    storage.initialize()
+    storage.replace_measurement_round(
+        "round-for-pdf",
+        [ApprovedZone("zone-a", Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]))],
+        [],
+    )
+    storage.close()
+    monkeypatch.setenv("CYBERBREIN_DATABASE_URL", clean_postgis)
+
+    app = AppTest.from_file("src/cyberbrein/presentation/app.py").run()
+    export_button = next(button for button in app.button if button.label == "Exporteer PDF")
+    export_button.click().run(timeout=15)
+
+    assert not app.exception
+    assert any(button.label == "Download PDF" for button in app.get("download_button"))
