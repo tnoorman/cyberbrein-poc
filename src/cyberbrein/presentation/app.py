@@ -136,12 +136,14 @@ def main() -> None:
             filters=filters,
         )
     if pdf_action.button("Exporteer PDF", type="secondary", width="stretch"):
-        st.session_state["show_pdf_dialog"] = True
-    if st.session_state.get("show_pdf_dialog"):
-        _render_pdf_dialog(dashboard, filters)
+        _activate_dialog(st.session_state, "pdf")
     if delete_action.button("Meetdata verwijderen", type="secondary", width="stretch"):
-        st.session_state["show_delete_dialog"] = True
-    if st.session_state.get("show_delete_dialog"):
+        _activate_dialog(st.session_state, "delete")
+
+    active_dialog = st.session_state.get("active_dialog")
+    if active_dialog == "pdf":
+        _render_pdf_dialog(dashboard, filters)
+    elif active_dialog == "delete":
         _render_delete_dialog(
             database_url=database_url,
             measurement_round_id=selected_round,
@@ -210,7 +212,7 @@ def _render_delete_dialog(
     )
     cancel, delete_column = st.columns(2)
     if cancel.button("Annuleren", width="stretch"):
-        st.session_state.pop("show_delete_dialog", None)
+        st.session_state.pop("active_dialog", None)
         st.rerun()
     if delete_column.button(
         "Bevestig verwijdering",
@@ -264,6 +266,7 @@ def _clear_deleted_round_state(
         "selected_network_id",
         "pdf_preview",
         "pdf_preview_key",
+        "active_dialog",
         "show_pdf_dialog",
         "show_delete_dialog",
         f"confirm_delete_{measurement_round_id}",
@@ -366,9 +369,19 @@ def _clear_result_state(state: MutableMapping[str, Any]) -> None:
         "selected_network_id",
         "pdf_preview",
         "pdf_preview_key",
+        "active_dialog",
         "show_pdf_dialog",
+        "show_delete_dialog",
     ):
         state.pop(key, None)
+
+
+def _activate_dialog(state: MutableMapping[str, Any], dialog: str) -> None:
+    if dialog not in {"pdf", "delete"}:
+        raise ValueError("unknown dialog")
+    state.pop("show_pdf_dialog", None)
+    state.pop("show_delete_dialog", None)
+    state["active_dialog"] = dialog
 
 
 def _render_metrics(dashboard: DashboardData) -> None:
