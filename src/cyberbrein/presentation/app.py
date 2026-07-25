@@ -81,9 +81,12 @@ def main() -> None:
             st.info("Er is nog geen verwerkte meetronde beschikbaar.")
             return
         round_ids = [item.measurement_round_id for item in rounds]
-        selected_round = st.sidebar.selectbox("Meetronde", round_ids)
+        selected_round = st.session_state.get("active_round_id")
+        if selected_round not in round_ids:
+            selected_round = round_ids[0]
+            st.session_state["active_round_id"] = selected_round
         unfiltered = repository.load_dashboard(selected_round)
-        filters = _render_filters(unfiltered.filter_options)
+        filters = st.session_state.get("applied_filters", DashboardFilters())
         dashboard = repository.load_dashboard(selected_round, filters)
     except (SQLAlchemyError, RuntimeError, ValueError):
         st.error("De dashboarddata kon niet veilig worden geladen.")
@@ -94,12 +97,19 @@ def main() -> None:
 
     _render_metrics(dashboard)
 
-    context, delete_action = st.columns([4, 1], vertical_alignment="center")
+    context, filter_action, delete_action = st.columns([4, 1, 1], vertical_alignment="center")
     zone_label = ", ".join(zone.zone_id for zone in unfiltered.zones)
     context.markdown(
         f'<div class="cb-context"><strong>{zone_label}</strong> · gemeten gebied</div>',
         unsafe_allow_html=True,
     )
+    with filter_action:
+        _render_filter_popover(
+            round_ids=round_ids,
+            selected_round=selected_round,
+            options=unfiltered.filter_options,
+            filters=filters,
+        )
     if delete_action.button("Meetdata verwijderen", type="secondary", width="stretch"):
         st.session_state["show_delete_dialog"] = True
     if st.session_state.get("show_delete_dialog"):
@@ -239,29 +249,99 @@ def _clear_deleted_round_state(
         state.pop(key, None)
 
 
-def _render_filters(options: FilterOptions) -> DashboardFilters:
-    zone_ids = st.sidebar.multiselect("Zone", options.zone_ids)
-    bands = st.sidebar.multiselect("Band", options.bands)
-    channels = st.sidebar.multiselect("Kanaal", options.channels)
-    encryptions = st.sidebar.multiselect("Encryptietype", options.encryptions)
-    score_colors = st.sidebar.multiselect(
-        "Scorekleur",
-        options.score_colors,
-        format_func=lambda value: COLOR_LABELS[value],
+def _render_filter_popover(
+    *,
+    round_ids: list[str],
+    selected_round: str,
+    options: FilterOptions,
+    filters: DashboardFilters,
+) -> None:
+    active_count = _active_filter_count(filters)
+    label = f"Filters ({active_count})" if active_count else "Filters"
+    with st.popover(label, width="stretch"):
+        st.subheader("Filters")
+        st.caption("Verfijn de kaart op veilige categorieën en klassen.")
+        with st.form("dashboard_filters"):
+            staged_round = st.selectbox(
+                "Meetronde",
+                round_ids,
+                index=round_ids.index(selected_round),
+            )
+            bands = st.multiselect("Band", options.bands, default=sorted(filters.bands))
+            encryptions = st.multiselect(
+                "Encryptietype",
+                options.encryptions,
+                default=sorted(filters.encryptions),
+            )
+            score_colors = st.pills(
+                "Scorekleur",
+                options.score_colors,
+                default=sorted(filters.score_colors),
+                selection_mode="multi",
+                format_func=lambda value: COLOR_LABELS[value],
+            )
+            signal_categories = st.segmented_control(
+                "Signaalsterkte",
+                options.signal_categories,
+                default=sorted(filters.signal_categories),
+                selection_mode="multi",
+                format_func=lambda value: SIGNAL_LABELS[value],
+                width="stretch",
+            )
+            with st.expander("Meer filters"):
+                zone_ids = st.multiselect(
+                    "Zone",
+                    options.zone_ids,
+                    default=sorted(filters.zone_ids),
+                )
+                channels = st.multiselect(
+                    "Kanaal",
+                    options.channels,
+                    default=sorted(filters.channels),
+                )
+            reset, apply = st.columns(2)
+            reset_clicked = reset.form_submit_button("Filters wissen", width="stretch")
+            apply_clicked = apply.form_submit_button(
+                "Filters toepassen",
+                type="primary",
+                width="stretch",
+            )
+        if reset_clicked:
+            st.session_state["active_round_id"] = staged_round
+            st.session_state["applied_filters"] = DashboardFilters()
+            _clear_result_state(st.session_state)
+            st.rerun()
+        if apply_clicked:
+            st.session_state["active_round_id"] = staged_round
+            st.session_state["applied_filters"] = DashboardFilters(
+                zone_ids=frozenset(zone_ids),
+                bands=frozenset(bands),
+                channels=frozenset(channels),
+                encryptions=frozenset(encryptions),
+                score_colors=frozenset(score_colors or ()),
+                signal_categories=frozenset(signal_categories or ()),
+            )
+            _clear_result_state(st.session_state)
+            st.rerun()
+
+
+def _active_filter_count(filters: DashboardFilters) -> int:
+    return sum(
+        bool(values)
+        for values in (
+            filters.zone_ids,
+            filters.bands,
+            filters.channels,
+            filters.encryptions,
+            filters.score_colors,
+            filters.signal_categories,
+        )
     )
-    signal_categories = st.sidebar.multiselect(
-        "Signaalklasse (score)",
-        options.signal_categories,
-        format_func=lambda value: SIGNAL_LABELS[value],
-    )
-    return DashboardFilters(
-        zone_ids=frozenset(zone_ids),
-        bands=frozenset(bands),
-        channels=frozenset(channels),
-        encryptions=frozenset(encryptions),
-        score_colors=frozenset(score_colors),
-        signal_categories=frozenset(signal_categories),
-    )
+
+
+def _clear_result_state(state: MutableMapping[str, Any]) -> None:
+    for key in ("selected_network_id", "pdf_preview", "pdf_preview_key"):
+        state.pop(key, None)
 
 
 def _render_metrics(dashboard: DashboardData) -> None:
