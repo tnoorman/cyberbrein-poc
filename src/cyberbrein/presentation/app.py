@@ -22,6 +22,7 @@ from cyberbrein.presentation.models import (
 )
 from cyberbrein.presentation.pdf_export import generate_pdf
 from cyberbrein.presentation.repository import PresentationRepository
+from cyberbrein.presentation.styles import apply_dashboard_styles
 from cyberbrein.storage.repository import StorageRepository
 
 COLOR_LABELS = {
@@ -53,8 +54,15 @@ CATEGORY_LABELS = {
 
 
 def main() -> None:
-    st.set_page_config(page_title="Cyberbrein Wi-Fi Exposure", layout="wide")
-    st.title("Wi-Fi-exposure per meetronde")
+    st.set_page_config(
+        page_title="Cyberbrein Wi-Fi Exposure",
+        page_icon="🛡️",
+        layout="wide",
+    )
+    apply_dashboard_styles()
+    st.markdown('<div class="cb-eyebrow">Cyberbrein · Wi-Fi exposure</div>', unsafe_allow_html=True)
+    st.title("Kaartoverzicht")
+    st.caption("Passieve Wi-Fi-waarnemingen binnen de goedgekeurde meetzone")
     database_url = os.environ.get("CYBERBREIN_DATABASE_URL", "")
     if not database_url:
         st.error("De lokale databaseconfiguratie ontbreekt.")
@@ -84,12 +92,15 @@ def main() -> None:
         if repository is not None:
             repository.close()
 
-    total, elevated, high = st.columns(3)
-    total.metric("Netwerkvondsten", dashboard.total_count)
-    elevated.metric("Verhoogde aandacht", dashboard.elevated_count)
-    high.metric("Hoge aandacht", dashboard.high_count)
+    _render_metrics(dashboard)
 
-    if st.button("Meetdata verwijderen", type="secondary"):
+    context, delete_action = st.columns([4, 1], vertical_alignment="center")
+    zone_label = ", ".join(zone.zone_id for zone in unfiltered.zones)
+    context.markdown(
+        f'<div class="cb-context"><strong>{zone_label}</strong> · gemeten gebied</div>',
+        unsafe_allow_html=True,
+    )
+    if delete_action.button("Meetdata verwijderen", type="secondary", width="stretch"):
         st.session_state["show_delete_dialog"] = True
     if st.session_state.get("show_delete_dialog"):
         _render_delete_dialog(
@@ -107,9 +118,11 @@ def main() -> None:
         returned_objects=["last_object_clicked", "last_object_clicked_tooltip"],
         key=f"map-{selected_round}-{hash(filters)}",
     )
-    st.caption(
-        "De bolletjes zijn indicatieve netwerkvondsten binnen de meetcontext. "
-        "Ze bewijzen niet waar een access point fysiek aanwezig is."
+    st.markdown(
+        '<div class="cb-privacy-note">ⓘ De kaart toont passieve Wi-Fi-waarnemingen. '
+        "De posities zijn indicatief en vormen geen bewezen locatie van een access point. "
+        "De ondergrond is bewust labelloos.</div>",
+        unsafe_allow_html=True,
     )
 
     selected = finding_from_selection_label(
@@ -165,14 +178,14 @@ def _render_delete_dialog(
         key=confirmation_key,
     )
     cancel, delete_column = st.columns(2)
-    if cancel.button("Annuleren", use_container_width=True):
+    if cancel.button("Annuleren", width="stretch"):
         st.session_state.pop("show_delete_dialog", None)
         st.rerun()
     if delete_column.button(
         "Bevestig verwijdering",
         type="primary",
         disabled=not confirmed,
-        use_container_width=True,
+        width="stretch",
     ):
         try:
             result = _delete_measurement_round(
@@ -251,6 +264,19 @@ def _render_filters(options: FilterOptions) -> DashboardFilters:
     )
 
 
+def _render_metrics(dashboard: DashboardData) -> None:
+    columns = st.columns(3)
+    metrics = (
+        ("Netwerkvondsten", dashboard.total_count),
+        ("Verhoogde aandacht", dashboard.elevated_count),
+        ("Hoge aandacht", dashboard.high_count),
+    )
+    for column, (label, value) in zip(columns, metrics, strict=True):
+        with column:
+            with st.container(border=True):
+                st.metric(label, value)
+
+
 def _render_detail(finding: FindingView) -> None:
     st.subheader("Detail netwerkvondst")
     st.code(finding.network_id, language=None)
@@ -280,7 +306,7 @@ def _render_detail(finding: FindingView) -> None:
         }
         for factor in finding.factors
     ]
-    st.dataframe(factor_rows, hide_index=True, use_container_width=True)
+    st.dataframe(factor_rows, hide_index=True, width="stretch")
     st.caption(
         "Deze beoordeling gebruikt uitsluitend passief waargenomen metadata en is geen volledig "
         "beveiligingsoordeel."
