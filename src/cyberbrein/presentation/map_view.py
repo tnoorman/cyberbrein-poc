@@ -13,6 +13,7 @@ MARKER_COLORS = {
     "YELLOW": "#f9a825",
     "RED": "#c62828",
 }
+ZONE_FILL_OPACITY = 0.08
 SELECTION_PREFIX = "Selecteer netwerkvondst "
 
 
@@ -45,7 +46,7 @@ def build_map(data: DashboardData) -> folium.Map:
                 "color": "#455a64",
                 "weight": 2,
                 "fillColor": "#cfd8dc",
-                "fillOpacity": 0.25,
+                "fillOpacity": ZONE_FILL_OPACITY,
             },
         ).add_to(map_view)
     marker_cluster = MarkerCluster(

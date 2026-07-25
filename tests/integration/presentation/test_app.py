@@ -135,6 +135,12 @@ def test_pdf_action_opens_preview_with_download(
     assert not app.exception
     assert any(button.label == "Download PDF" for button in app.get("download_button"))
 
+    delete_button = next(button for button in app.button if button.label == "Meetdata verwijderen")
+    delete_button.click().run()
+
+    assert not app.exception
+    assert any(button.label == "Bevestig verwijdering" for button in app.button)
+
 
 def test_filter_form_only_changes_results_after_apply_and_can_reset(
     clean_postgis: str,

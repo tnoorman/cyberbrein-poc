@@ -22,7 +22,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .map_view import MARKER_COLORS
+from .map_view import MARKER_COLORS, ZONE_FILL_OPACITY
 from .models import DashboardData, DashboardFilters
 
 TileFetcher = Callable[[str], bytes | None]
@@ -275,9 +275,12 @@ class _MapDrawing(Flowable):
                 for point in points[1:]:
                     path.lineTo(*point)
                 path.close()
+                self.canv.saveState()
                 self.canv.setStrokeColor(colors.HexColor("#455a64"))
                 self.canv.setFillColor(colors.HexColor("#cfd8dc"))
+                self.canv.setFillAlpha(ZONE_FILL_OPACITY)
                 self.canv.drawPath(path, stroke=1, fill=1, fillMode=0)
+                self.canv.restoreState()
         for finding in self.data.findings:
             x, y = _project(
                 finding.longitude,

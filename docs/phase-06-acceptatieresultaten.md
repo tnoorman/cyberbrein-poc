@@ -10,7 +10,7 @@
   metadata; de oude dictionary- en dataframeweergave zijn niet aanwezig.
 - De PDF-actie opent een preview en biedt de downloadknop aan.
 - Kaart-, PDF-, privacy-, Operations- en PostGIS-tests blijven onderdeel van de volledige suite.
-- Ruff-format en Ruff-lint zijn groen; alle 201 tests slagen.
+- Ruff-format en Ruff-lint zijn groen; alle 202 tests slagen.
 
 ## Lokale runtime-rooktest
 
@@ -34,9 +34,17 @@ verwijderd.
 De uitvoering is niet pixel-perfect: native Streamlit-componenten en responsive gedrag hebben
 voorrang boven vaste desktopafmetingen.
 
-## Open handmatig acceptatiepunt
+## Handmatige mobiele beoordeling
 
-Na merge wordt het dashboard tijdelijk op `0.0.0.0` gestart voor controle vanaf een telefoon.
-Daarbij worden leesbaarheid, knopvolgorde, filterbediening, detailnavigatie, PDF-preview en
-verwijdermodal visueel beoordeeld. De definitieve verwijderknop wordt tijdens deze UI-controle niet
-bevestigd, zodat de functionele demodata beschikbaar blijft voor de latere hardwareacceptatie.
+Het gemergede dashboard is tijdelijk op `0.0.0.0:8501` gestart en vanaf een telefoon beoordeeld.
+De algemene responsive weergave zag er goed uit en PDF-export werkte. Daarbij kwamen twee concrete
+verbeterpunten naar voren:
+
+- de zonevulling bedekte de CARTO-ondergrond te sterk en is daarom in dashboard en PDF verlaagd
+  naar 8% opacity;
+- na PDF-export konden twee dialogs tegelijk actief zijn; de UI gebruikt nu één exclusieve
+  dialogstatus en heeft een regressietest voor PDF-preview naar verwijdermodal.
+
+De mobiele server is na de test gestopt. Een laatste visuele controle van de transparantere zone
+volgt met een nieuwe verwerkte meetronde; de eerder gebruikte functionele meetronde is conform
+FR-10 definitief verwijderd.

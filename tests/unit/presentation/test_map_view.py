@@ -75,6 +75,7 @@ def test_map_has_label_free_roads_without_network_identifier() -> None:
     assert "light_nolabels" in rendered
     assert "OpenStreetMap" in rendered
     assert "CARTO" in rendered
+    assert '"fillOpacity": 0.08' in rendered
     assert "private-pseudonym" not in rendered
     assert "#f9a825" in rendered
     assert "Selecteer netwerkvondst 1" in rendered
