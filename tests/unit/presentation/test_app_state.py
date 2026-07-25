@@ -2,6 +2,8 @@ from cyberbrein.presentation.app import (
     _active_filter_count,
     _clear_deleted_round_state,
     _clear_result_state,
+    _frequency_label,
+    _short_network_id,
 )
 from cyberbrein.presentation.models import DashboardFilters
 
@@ -42,3 +44,10 @@ def test_filter_change_discards_stale_result_state() -> None:
     _clear_result_state(state)
 
     assert state == {"applied_filters": DashboardFilters()}
+
+
+def test_detail_labels_shorten_identifier_and_handle_unknown_frequency() -> None:
+    assert _short_network_id("abcdefghijklmnop") == "abcdefghijkl…"
+    assert _short_network_id("short") == "short"
+    assert _frequency_label(5180) == "5180 MHz"
+    assert _frequency_label(None) == "Onbekend"

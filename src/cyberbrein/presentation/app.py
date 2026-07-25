@@ -51,6 +51,16 @@ CATEGORY_LABELS = {
     "multiple": "meerdere keren waargenomen",
     "frequent": "vaak waargenomen",
 }
+FACTOR_EXPLANATIONS = {
+    "signal_strength": "Sterkere ontvangst maakt de vondst zichtbaarder in deze meetronde.",
+    "encryption": "Open of verouderde beveiliging vraagt meer aandacht dan WPA2 of WPA3.",
+    "observation_frequency": "Herhaalde waarnemingen maken de vondst zichtbaarder binnen de ronde.",
+}
+BADGE_COLORS = {
+    "GREEN": "green",
+    "YELLOW": "orange",
+    "RED": "red",
+}
 
 
 def main() -> None:
@@ -61,10 +71,9 @@ def main() -> None:
     )
     apply_dashboard_styles()
     st.markdown('<div class="cb-eyebrow">Cyberbrein · Wi-Fi exposure</div>', unsafe_allow_html=True)
-    st.title("Kaartoverzicht")
-    st.caption("Passieve Wi-Fi-waarnemingen binnen de goedgekeurde meetzone")
     database_url = os.environ.get("CYBERBREIN_DATABASE_URL", "")
     if not database_url:
+        _render_overview_header()
         st.error("De lokale databaseconfiguratie ontbreekt.")
         return
 
@@ -73,6 +82,7 @@ def main() -> None:
         repository = PresentationRepository(database_url)
         rounds = repository.list_measurement_rounds()
         if not rounds:
+            _render_overview_header()
             deleted_count = st.session_state.pop("deletion_success_count", None)
             if deleted_count is not None:
                 st.success(
@@ -95,6 +105,16 @@ def main() -> None:
         if repository is not None:
             repository.close()
 
+    selected_network_id = st.session_state.get("selected_network_id")
+    selected = next(
+        (finding for finding in dashboard.findings if finding.network_id == selected_network_id),
+        None,
+    )
+    if selected is not None:
+        _render_detail(selected)
+        return
+
+    _render_overview_header()
     _render_metrics(dashboard)
 
     context, filter_action, delete_action = st.columns([4, 1, 1], vertical_alignment="center")
@@ -151,15 +171,7 @@ def main() -> None:
             selected = matching[0]
     if selected is not None:
         st.session_state["selected_network_id"] = selected.network_id
-
-    selected_network_id = st.session_state.get("selected_network_id")
-    selected = next(
-        (finding for finding in dashboard.findings if finding.network_id == selected_network_id),
-        None,
-    )
-    if selected is not None:
-        st.success("Netwerkvondst geselecteerd. De details staan direct hieronder.")
-        _render_detail(selected)
+        st.rerun()
     _render_pdf_export(dashboard, filters)
 
 
@@ -357,40 +369,85 @@ def _render_metrics(dashboard: DashboardData) -> None:
                 st.metric(label, value)
 
 
-def _render_detail(finding: FindingView) -> None:
-    st.subheader("Detail netwerkvondst")
-    st.code(finding.network_id, language=None)
-    score, color = st.columns(2)
-    score.metric("Exposure-score", f"{finding.score} / 8")
-    color.metric("Scorekleur", COLOR_LABELS[finding.score_color])
+def _render_overview_header() -> None:
+    st.title("Kaartoverzicht")
+    st.caption("Passieve Wi-Fi-waarnemingen binnen de goedgekeurde meetzone")
 
-    st.write(
-        {
-            "Zone": finding.zone_id,
-            "Band": finding.band,
-            "Kanaal": finding.channel,
-            "Encryptietype": finding.encryption,
-            "Gemiddelde signaalsterkte": f"{finding.average_rssi_dbm:.1f} dBm",
-            "Sterkste signaalsterkte": f"{finding.strongest_rssi_dbm} dBm",
-            "Aantal waarnemingen": finding.observation_count,
-        }
+
+def _render_detail(finding: FindingView) -> None:
+    if st.button("← Terug naar overzicht", type="tertiary"):
+        st.session_state.pop("selected_network_id", None)
+        st.rerun()
+    st.markdown('<div class="cb-eyebrow">Pseudonieme netwerk-ID</div>', unsafe_allow_html=True)
+    identity, attention = st.columns([4, 1], vertical_alignment="center")
+    identity.title(_short_network_id(finding.network_id))
+    attention.badge(
+        COLOR_LABELS[finding.score_color],
+        color=BADGE_COLORS[finding.score_color],
     )
-    factor_rows = [
-        {
-            "Scorefactor": FACTOR_LABELS[factor.factor_type],
-            "Waargenomen waarde": factor.observed_value,
-            "Categorie": CATEGORY_LABELS[factor.category],
-            "Punten": factor.points,
-            "Weging": factor.weight,
-            "Gewogen punten": factor.weighted_points,
-        }
-        for factor in finding.factors
-    ]
-    st.dataframe(factor_rows, hide_index=True, width="stretch")
-    st.caption(
-        "Deze beoordeling gebruikt uitsluitend passief waargenomen metadata en is geen volledig "
-        "beveiligingsoordeel."
+    st.progress(
+        finding.score / 8,
+        text=f"Totaalscore · {finding.score} / 8",
     )
+    with st.expander("Volledige pseudonieme netwerk-ID"):
+        st.code(finding.network_id, language=None)
+
+    st.subheader("Scorefactoren")
+    for factor in finding.factors:
+        with st.container(border=True):
+            label, category = st.columns([3, 1], vertical_alignment="center")
+            label.markdown(f"**{FACTOR_LABELS[factor.factor_type]}**")
+            category.markdown(f"**{CATEGORY_LABELS[factor.category].capitalize()}**")
+            maximum = 2 * factor.weight
+            st.progress(
+                factor.weighted_points / maximum,
+                text=f"{factor.weighted_points} van {maximum} gewogen punten",
+            )
+            st.caption(
+                f"Waargenomen: {factor.observed_value} · factorpunten: {factor.points} · "
+                f"weging: {factor.weight}"
+            )
+            st.caption(FACTOR_EXPLANATIONS[factor.factor_type])
+
+    st.subheader("Technische metadata")
+    with st.container(border=True):
+        rows = (
+            (
+                ("Band", finding.band),
+                ("Kanaal", str(finding.channel)),
+                ("Frequentie", _frequency_label(finding.frequency_mhz)),
+            ),
+            (
+                ("Encryptietype", finding.encryption),
+                ("Gem. signaalsterkte", f"{finding.average_rssi_dbm:.1f} dBm"),
+                ("Sterkste signaalsterkte", f"{finding.strongest_rssi_dbm} dBm"),
+            ),
+            (
+                ("Aantal waarnemingen", str(finding.observation_count)),
+                ("Zone", finding.zone_id),
+            ),
+        )
+        for row in rows:
+            columns = st.columns(3)
+            for column, (label, value) in zip(columns, row, strict=False):
+                column.caption(label.upper())
+                column.markdown(f"**{value}**")
+
+    st.markdown(
+        '<div class="cb-privacy-note">ⓘ Deze beoordeling is gebaseerd op passief waargenomen '
+        "metadata en is geen volledig beveiligingsoordeel.</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _short_network_id(network_id: str, visible_characters: int = 12) -> str:
+    if len(network_id) <= visible_characters:
+        return network_id
+    return f"{network_id[:visible_characters]}…"
+
+
+def _frequency_label(frequency_mhz: int | None) -> str:
+    return f"{frequency_mhz} MHz" if frequency_mhz is not None else "Onbekend"
 
 
 def _render_pdf_export(dashboard: DashboardData, filters: DashboardFilters) -> None:
