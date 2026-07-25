@@ -1,4 +1,5 @@
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,11 +20,12 @@ from sqlalchemy import (
     Table,
     create_engine,
     delete,
+    func,
     insert,
     select,
     text,
 )
-from sqlalchemy.engine import Engine, make_url
+from sqlalchemy.engine import Connection, Engine, make_url
 
 from cyberbrein.processing.models import (
     ApprovedZone,
@@ -146,8 +148,43 @@ score_factors = Table(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class MeasurementRoundRecordCounts:
+    measurement_rounds: int
+    zones: int
+    network_findings: int
+    network_scores: int
+    score_factors: int
+
+    @property
+    def all_zero(self) -> bool:
+        return not any(
+            (
+                self.measurement_rounds,
+                self.zones,
+                self.network_findings,
+                self.network_scores,
+                self.score_factors,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StorageDeletionResult:
+    before: MeasurementRoundRecordCounts
+    after: MeasurementRoundRecordCounts
+
+
 class ActiveMeasurementRoundError(RuntimeError):
     """Raised when a different retained measurement round already exists."""
+
+
+class MeasurementRoundNotFoundError(RuntimeError):
+    """Raised when the requested measurement round is not retained."""
+
+
+class DeletionVerificationError(RuntimeError):
+    """Raised when records remain after a measurement-round deletion."""
 
 
 class StorageRepository:
@@ -257,6 +294,27 @@ class StorageRepository:
                 for row in rows
             )
 
+    def delete_measurement_round(self, measurement_round_id: str) -> StorageDeletionResult:
+        """Hard-delete one round and verify every related Storage table afterwards."""
+        if not measurement_round_id.strip():
+            raise ValueError("measurement_round_id is required")
+
+        with self._engine.begin() as connection:
+            before = _measurement_round_record_counts(connection, measurement_round_id)
+            if before.measurement_rounds != 1:
+                raise MeasurementRoundNotFoundError("measurement round does not exist")
+            connection.execute(
+                delete(measurement_rounds).where(
+                    measurement_rounds.c.measurement_round_id == measurement_round_id
+                )
+            )
+
+        with self._engine.connect() as connection:
+            after = _measurement_round_record_counts(connection, measurement_round_id)
+        if not after.all_zero:
+            raise DeletionVerificationError("measurement round deletion could not be verified")
+        return StorageDeletionResult(before=before, after=after)
+
     def close(self) -> None:
         self._engine.dispose()
 
@@ -295,6 +353,26 @@ def _round_bounds(
     return (
         min(item.finding.first_observed_at_utc for item in findings),
         max(item.finding.last_observed_at_utc for item in findings),
+    )
+
+
+def _measurement_round_record_counts(
+    connection: Connection,
+    measurement_round_id: str,
+) -> MeasurementRoundRecordCounts:
+    def count(table: Table) -> int:
+        return connection.execute(
+            select(func.count())
+            .select_from(table)
+            .where(table.c.measurement_round_id == measurement_round_id)
+        ).scalar_one()
+
+    return MeasurementRoundRecordCounts(
+        measurement_rounds=count(measurement_rounds),
+        zones=count(zones),
+        network_findings=count(network_findings),
+        network_scores=count(network_scores),
+        score_factors=count(score_factors),
     )
 
 

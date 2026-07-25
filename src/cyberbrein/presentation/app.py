@@ -1,10 +1,14 @@
 import os
 import re
+from collections.abc import MutableMapping
+from pathlib import Path
+from typing import Any
 
 import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit_folium import st_folium
 
+from cyberbrein.operations.service import ActivityLog, DeletionResult, OperationsService
 from cyberbrein.presentation.map_view import (
     build_map,
     finding_from_selection_label,
@@ -18,6 +22,7 @@ from cyberbrein.presentation.models import (
 )
 from cyberbrein.presentation.pdf_export import generate_pdf
 from cyberbrein.presentation.repository import PresentationRepository
+from cyberbrein.storage.repository import StorageRepository
 
 COLOR_LABELS = {
     "GREEN": "Groen – beperkte aandacht",
@@ -60,6 +65,11 @@ def main() -> None:
         repository = PresentationRepository(database_url)
         rounds = repository.list_measurement_rounds()
         if not rounds:
+            deleted_count = st.session_state.pop("deletion_success_count", None)
+            if deleted_count is not None:
+                st.success(
+                    f"De meetronde en {deleted_count} netwerkvondsten zijn definitief verwijderd."
+                )
             st.info("Er is nog geen verwerkte meetronde beschikbaar.")
             return
         round_ids = [item.measurement_round_id for item in rounds]
@@ -78,6 +88,15 @@ def main() -> None:
     total.metric("Netwerkvondsten", dashboard.total_count)
     elevated.metric("Verhoogde aandacht", dashboard.elevated_count)
     high.metric("Hoge aandacht", dashboard.high_count)
+
+    if st.button("Meetdata verwijderen", type="secondary"):
+        st.session_state["show_delete_dialog"] = True
+    if st.session_state.get("show_delete_dialog"):
+        _render_delete_dialog(
+            database_url=database_url,
+            measurement_round_id=selected_round,
+            finding_count=unfiltered.total_count,
+        )
 
     if not dashboard.findings:
         st.info("Voor deze selectie zijn geen netwerkvondsten beschikbaar.")
@@ -119,6 +138,92 @@ def main() -> None:
         st.success("Netwerkvondst geselecteerd. De details staan direct hieronder.")
         _render_detail(selected)
     _render_pdf_export(dashboard, filters)
+
+
+@st.dialog("Meetdata verwijderen na inzichtverstrekking")
+def _render_delete_dialog(
+    *,
+    database_url: str,
+    measurement_round_id: str,
+    finding_count: int,
+) -> None:
+    st.caption("Beheeractie · alleen beschikbaar voor Cyberbrein")
+    st.write(
+        {
+            "Geselecteerde meetronde": measurement_round_id,
+            "Netwerkvondsten": finding_count,
+        }
+    )
+    st.error(
+        "Verwijdering is definitief. Deze meetdata kan na verwijdering niet worden hersteld. "
+        "Voer dit pas uit nadat de inzichten zijn gedeeld."
+    )
+    confirmation_key = f"confirm_delete_{measurement_round_id}"
+    confirmed = st.checkbox(
+        "Ik bevestig dat de inzichten zijn verstrekt en dat deze meetdata permanent verwijderd "
+        "mag worden.",
+        key=confirmation_key,
+    )
+    cancel, delete_column = st.columns(2)
+    if cancel.button("Annuleren", use_container_width=True):
+        st.session_state.pop("show_delete_dialog", None)
+        st.rerun()
+    if delete_column.button(
+        "Bevestig verwijdering",
+        type="primary",
+        disabled=not confirmed,
+        use_container_width=True,
+    ):
+        try:
+            result = _delete_measurement_round(
+                database_url=database_url,
+                activity_log_path=Path(
+                    os.environ.get(
+                        "CYBERBREIN_ACTIVITY_LOG_PATH",
+                        "data/logs/operations.jsonl",
+                    )
+                ),
+                measurement_round_id=measurement_round_id,
+            )
+        except Exception:
+            st.error(
+                "De meetdata kon niet aantoonbaar worden verwijderd. "
+                "Controleer het activiteitenlog en Storage."
+            )
+            return
+        _clear_deleted_round_state(st.session_state, measurement_round_id)
+        st.session_state["deletion_success_count"] = result.deleted_findings
+        st.rerun()
+
+
+def _delete_measurement_round(
+    *,
+    database_url: str,
+    activity_log_path: Path,
+    measurement_round_id: str,
+) -> DeletionResult:
+    repository = StorageRepository(database_url)
+    try:
+        return OperationsService(
+            repository,
+            ActivityLog(activity_log_path),
+        ).delete_measurement_round(measurement_round_id)
+    finally:
+        repository.close()
+
+
+def _clear_deleted_round_state(
+    state: MutableMapping[str, Any],
+    measurement_round_id: str,
+) -> None:
+    for key in (
+        "selected_network_id",
+        "pdf_preview",
+        "pdf_preview_key",
+        "show_delete_dialog",
+        f"confirm_delete_{measurement_round_id}",
+    ):
+        state.pop(key, None)
 
 
 def _render_filters(options: FilterOptions) -> DashboardFilters:
