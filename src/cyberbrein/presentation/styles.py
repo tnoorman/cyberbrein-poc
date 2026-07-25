@@ -34,6 +34,24 @@ DASHBOARD_CSS = """
         margin-top: 0.4rem;
         padding: 0.8rem 1rem;
     }
+    @media (max-width: 768px) {
+        .stMainBlockContainer {
+            padding-left: 1rem;
+            padding-right: 1rem;
+            padding-top: 1.25rem;
+        }
+        [data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap;
+        }
+        [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+            width: 100% !important;
+        }
+        [data-testid="stMetric"] {
+            min-height: auto;
+        }
+    }
 </style>
 """
 

@@ -96,7 +96,9 @@ def main() -> None:
             selected_round = round_ids[0]
             st.session_state["active_round_id"] = selected_round
         unfiltered = repository.load_dashboard(selected_round)
-        filters = st.session_state.get("applied_filters", DashboardFilters())
+        if "applied_filters" not in st.session_state:
+            st.session_state["applied_filters"] = DashboardFilters()
+        filters = st.session_state["applied_filters"]
         dashboard = repository.load_dashboard(selected_round, filters)
     except (SQLAlchemyError, RuntimeError, ValueError):
         st.error("De dashboarddata kon niet veilig worden geladen.")
@@ -189,12 +191,13 @@ def _render_delete_dialog(
     finding_count: int,
 ) -> None:
     st.caption("Beheeractie · alleen beschikbaar voor Cyberbrein")
-    st.write(
-        {
-            "Geselecteerde meetronde": measurement_round_id,
-            "Netwerkvondsten": finding_count,
-        }
-    )
+    with st.container(border=True):
+        round_label, round_value = st.columns([2, 3], vertical_alignment="center")
+        round_label.caption("GESELECTEERDE MEETRONDE")
+        round_value.markdown(f"**{measurement_round_id}**")
+        count_label, count_value = st.columns([2, 3], vertical_alignment="center")
+        count_label.caption("NETWERKVONDSTEN")
+        count_value.markdown(f"**{finding_count} records**")
     st.error(
         "Verwijdering is definitief. Deze meetdata kan na verwijdering niet worden hersteld. "
         "Voer dit pas uit nadat de inzichten zijn gedeeld."

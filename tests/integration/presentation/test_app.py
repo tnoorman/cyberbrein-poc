@@ -134,3 +134,32 @@ def test_pdf_action_opens_preview_with_download(
 
     assert not app.exception
     assert any(button.label == "Download PDF" for button in app.get("download_button"))
+
+
+def test_filter_form_only_changes_results_after_apply_and_can_reset(
+    clean_postgis: str,
+    monkeypatch,
+) -> None:
+    storage = StorageRepository(clean_postgis)
+    storage.initialize()
+    storage.replace_measurement_round(
+        "round-for-filters",
+        [ApprovedZone("zone-a", Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]))],
+        [],
+    )
+    storage.close()
+    monkeypatch.setenv("CYBERBREIN_DATABASE_URL", clean_postgis)
+
+    app = AppTest.from_file("src/cyberbrein/presentation/app.py").run()
+    zone_filter = next(widget for widget in app.multiselect if widget.label == "Zone")
+    zone_filter.select("zone-a").run()
+
+    assert app.session_state["applied_filters"].zone_ids == frozenset()
+
+    apply_button = next(button for button in app.button if button.label == "Filters toepassen")
+    apply_button.click().run()
+    assert app.session_state["applied_filters"].zone_ids == frozenset({"zone-a"})
+
+    reset_button = next(button for button in app.button if button.label == "Filters wissen")
+    reset_button.click().run()
+    assert app.session_state["applied_filters"].zone_ids == frozenset()
