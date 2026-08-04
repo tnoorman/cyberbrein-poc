@@ -13,6 +13,7 @@ from .service import PipelineService
 CONFIGURATION_EXIT = 2
 PIPELINE_EXIT = 3
 CLEANUP_EXIT = 4
+UNUSABLE_SOURCE_EXIT = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,7 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except PipelineRuntimeError as error:
         _print_failure(error.category)
-        return PIPELINE_EXIT
+        return UNUSABLE_SOURCE_EXIT if error.category == "no_usable_observations" else PIPELINE_EXIT
 
     _print_result(result)
     if args.delete_source_on_success:

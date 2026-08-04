@@ -1,5 +1,6 @@
 import argparse
 import logging
+import math
 import sys
 from collections.abc import Sequence
 
@@ -89,6 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum cached GPS-fix age in seconds (default: 5).",
     )
     parser.add_argument(
+        "--max-gps-accuracy",
+        type=float,
+        default=15.0,
+        help="Maximum accepted horizontal GPS error in metres (default: 15).",
+    )
+    parser.add_argument(
         "--gps-wait",
         type=float,
         default=30.0,
@@ -113,6 +120,8 @@ def _validate_arguments(parser: argparse.ArgumentParser, args: argparse.Namespac
         parser.error("--gpsd-timeout must be positive")
     if args.gps_max_age <= 0:
         parser.error("--gps-max-age must be positive")
+    if not math.isfinite(args.max_gps_accuracy) or args.max_gps_accuracy < 0:
+        parser.error("--max-gps-accuracy must be finite and non-negative")
     if args.gps_wait < 0:
         parser.error("--gps-wait must not be negative")
 
@@ -144,10 +153,13 @@ def _collect(
             gpsd_client=gpsd_provider,
             channel_hopper=hopper,
             require_gps_fix=args.require_gps_fix,
+            max_gps_accuracy_m=args.max_gps_accuracy,
         )
         print("Collection gestart")
         return service.run(args.interface, args.duration_seconds, _sniff)
     finally:
+        if gpsd_provider is not None:
+            gpsd_provider.stop()
         interface_manager.restore()
 
 
@@ -194,6 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Waarnemingen opgeslagen: {summary.stored_observations}")
     print(f"Frames overgeslagen: {summary.unsupported_packets}")
     print(f"Ontbrekende GPS-fixes: {summary.missing_gps_fixes}")
+    print(f"GPS-fixes zonder nauwkeurigheid: {summary.missing_gps_accuracy}")
+    print(f"GPS-fixes boven nauwkeurigheidsgrens: {summary.excessive_gps_accuracy}")
     print("Collection gestopt")
     return 0
 

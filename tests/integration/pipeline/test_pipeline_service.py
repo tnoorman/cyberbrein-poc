@@ -80,19 +80,12 @@ def test_complete_round_is_processed_verified_and_stored(
         repository.close()
 
 
-def test_processing_rejections_are_stored_as_an_empty_round(
-    tmp_path: Path,
-    clean_postgis: str,
-) -> None:
+def test_complete_processing_rejection_fails_before_empty_storage(tmp_path: Path) -> None:
     source = tmp_path / "source.sqlite"
     _write_source(source, [_raw_observation(gps_accuracy_m=30.0)])
 
-    result = _run(PipelineService(), source, clean_postgis)
-
-    assert result.processing_accepted_count == 0
-    assert result.processing_rejected_count == 1
-    assert result.processing_rejection_reasons == {"gps_accuracy_exceeded": 1}
-    assert result.finding_count == 0
+    with pytest.raises(PipelineRuntimeError, match="no_usable_observations"):
+        _run(PipelineService(), source)
 
 
 def test_mixed_measurement_rounds_are_rejected_before_storage(tmp_path: Path) -> None:

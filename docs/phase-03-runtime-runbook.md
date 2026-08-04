@@ -4,6 +4,40 @@ Dit runbook verwerkt precies één tijdelijke Collection-buffer via Ingestion en
 geverifieerde PostgreSQL/PostGIS-opslag. Alleen de Collection-buffer gebruikt SQLite. De CLI toont
 uitsluitend aantallen en veilige afwijzingscategorieën.
 
+## Aanbevolen: volledige workflow met één commando
+
+Kopieer bij de eerste ingebruikname `.env.example` naar `.env`, stel minimaal
+`CYBERBREIN_INTERFACE` in en plaats het goedgekeurde zonebestand op het geconfigureerde pad. Start
+daarna Collection, Pipeline en het dashboard samen met:
+
+```bash
+./cyberbrein run
+```
+
+Start de launcher zelf zonder `sudo`. Bij de start van Collection vraagt de launcher eenmaal om
+het sudo-wachtwoord; Pipeline en het dashboard draaien daarna weer als de normale gebruiker.
+
+De launcher maakt zelf een UTC-meetronde-ID en cryptografisch mode-600-secret. Alleen Collection
+draait via `sudo`; Pipeline en Streamlit blijven onder de normale gebruiker draaien. Na
+geverifieerde opslag verwijdert Pipeline de bronbuffer en het secret voordat het dashboard start.
+Bij een fout vóór de eerste waarneming verwijdert de launcher de lege buffer en het ongebruikte
+secret automatisch. Als Collection wel gegevens heeft opgeslagen, blijven beide bestanden staan
+en kan Pipeline worden hervat met het getoonde
+`./cyberbrein resume <meetronde-id>`-commando.
+
+Vóór Collection controleert de launcher dat GPSD een 3D-fix mét horizontale nauwkeurigheid binnen
+`CYBERBREIN_MAX_GPS_ACCURACY` levert. Pipeline weigert een meetronde zonder bruikbare vondsten en
+behoudt in dat geval buffer en secret; zo wordt onbruikbare ruwe invoer niet als succes opgeruimd.
+Collection gebruikt dezelfde nauwkeurigheidsgrens, houdt één onderbreekbare GPSD-verbinding open
+en rapporteert afzonderlijk ontbrekende fixes, ontbrekende nauwkeurigheid en overschrijdingen.
+
+Gebruik `./cyberbrein run --no-dashboard` om na verwerking te stoppen, of
+`./cyberbrein dashboard` om alleen het dashboard opnieuw te starten. Alle waarden uit `.env`
+kunnen voor een eenmalige run met CLI-opties worden overschreven; bekijk die met
+`./cyberbrein run --help`.
+
+De losse stappen hieronder blijven beschikbaar voor diagnose en gecontroleerd herstel.
+
 ## Lokale invoer voorbereiden
 
 Runtimebestanden staan onder `data/local`, `data/smoke` en `data/processed` en worden niet
@@ -126,7 +160,11 @@ Verwacht een verwijderde bronbuffer en secret, drie scorefactoren per netwerkvon
 - Exitcode `2`: ongeldige runtimeconfiguratie of onveilige bestanden.
 - Exitcode `3`: Ingestion, Processing, Storage of opslagverificatie is mislukt.
 - Exitcode `4`: Storage is geverifieerd, maar cleanup is niet volledig geslaagd.
+- Exitcode `5`: de bronbuffer is geldig, maar bevat bij de gekozen beleidsgrens geen bruikbare
+  waarnemingen. Hervatten met dezelfde grens kan dit niet oplossen.
 - Bij exitcode `2` of `3` worden bronbuffer en secret niet verwijderd.
+- Bij exitcode `5` blijven bronbuffer en secret staan. Controleer de meetronde-ID en verwijder ze
+  daarna expliciet met `./cyberbrein discard <meetronde-id> --yes`.
 - Bij exitcode `4` moet expliciet worden vastgesteld welke invoer nog bestaat; meld de run niet
   als volledig afgerond.
 - SQLite-sidecars `-journal`, `-wal` en `-shm` worden, indien aanwezig, samen met de bronbuffer

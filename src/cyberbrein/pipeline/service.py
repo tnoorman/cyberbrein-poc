@@ -70,6 +70,9 @@ class PipelineService:
         except Exception as error:
             raise PipelineRuntimeError("processing_failed") from error
 
+        if not processing_result.findings:
+            raise PipelineRuntimeError("no_usable_observations")
+
         try:
             storage = self._storage_factory(storage_database_url)
         except Exception as error:
