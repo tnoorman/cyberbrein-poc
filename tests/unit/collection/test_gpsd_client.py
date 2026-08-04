@@ -31,6 +31,9 @@ class FakeTransport:
     def close(self) -> None:
         self.closed = True
 
+    def shutdown(self, how: int) -> None:
+        del how
+
 
 def _client_for(chunks: list[bytes]) -> tuple[GpsdClient, FakeTransport]:
     transport = FakeTransport(chunks)
@@ -58,7 +61,7 @@ def test_get_latest_fix_returns_valid_gpsd_fix() -> None:
         observed_at_utc=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
     )
     assert transport.sent_data == [GPSD_WATCH_COMMAND]
-    assert transport.timeout == 2.0
+    assert transport.timeout == pytest.approx(2.0, abs=0.01)
     assert transport.closed
 
 
@@ -97,6 +100,134 @@ def test_get_latest_fix_accepts_missing_accuracy() -> None:
 
     assert fix is not None
     assert fix.accuracy_m is None
+
+
+def test_get_latest_fix_combines_longitude_and_latitude_errors() -> None:
+    client, _ = _client_for(
+        [
+            b'{"class":"TPV","mode":3,"lat":0.0,"lon":0.0,'
+            b'"epx":11.2,"epy":13.6,"time":"2026-01-01T12:00:00Z"}\n'
+        ]
+    )
+
+    fix = client.get_latest_fix()
+
+    assert fix is not None
+    assert fix.accuracy_m == pytest.approx(17.62, abs=0.01)
+
+
+def test_get_latest_fix_prefers_reported_2d_error_over_axis_errors() -> None:
+    client, _ = _client_for(
+        [
+            b'{"class":"TPV","mode":3,"lat":0.0,"lon":0.0,'
+            b'"eph":14.0,"epx":11.2,"epy":13.6,"time":"2026-01-01T12:00:00Z"}\n'
+        ]
+    )
+
+    fix = client.get_latest_fix()
+
+    assert fix is not None
+    assert fix.accuracy_m == 14.0
+
+
+def test_get_latest_fix_waits_for_accuracy_after_initial_fix() -> None:
+    client, _ = _client_for(
+        [
+            b'{"class":"TPV","mode":3,"lat":0.0,"lon":0.0,"time":"2026-01-01T12:00:00Z"}\n',
+            b'{"class":"TPV","mode":3,"lat":0.0,"lon":0.0,'
+            b'"epx":3.0,"epy":4.0,"time":"2026-01-01T12:00:01Z"}\n',
+        ]
+    )
+
+    fix = client.get_latest_fix()
+
+    assert fix is not None
+    assert fix.accuracy_m == 5.0
+    assert fix.observed_at_utc == datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
+
+
+def test_get_latest_fix_has_overall_deadline_when_tpv_messages_keep_arriving() -> None:
+    transport = FakeTransport(
+        [
+            b'{"class":"TPV","mode":3,"lat":0.0,"lon":0.0,"time":"2026-01-01T12:00:00Z"}\n',
+            b'{"class":"TPV","mode":3,"lat":1.0,"lon":1.0,"time":"2026-01-01T12:00:01Z"}\n',
+        ]
+    )
+    monotonic_times = iter([100.0, 100.0, 102.0])
+    client = GpsdClient(
+        timeout_seconds=2.0,
+        transport_factory=lambda address, timeout: transport,
+        monotonic_clock=lambda: next(monotonic_times),
+    )
+
+    fix = client.get_latest_fix()
+
+    assert fix is not None
+    assert fix.latitude == 0.0
+    assert fix.accuracy_m is None
+
+
+def test_stream_uses_one_connection_and_merges_partial_tpv_messages() -> None:
+    stop_event = Event()
+    received: list[GpsFix] = []
+    transport = FakeTransport(
+        [
+            b'{"class":"TPV","mode":3,"lat":1.0,"lon":2.0,"time":"2026-01-01T12:00:00Z"}\n',
+            b'{"class":"TPV","epx":3.0,"epy":4.0}\n',
+            b'{"class":"TPV","mode":3,"lat":1.1,"lon":2.1,"time":"2026-01-01T12:00:01Z"}\n',
+        ]
+    )
+    connections = 0
+
+    def factory(address: tuple[str, int], timeout: float) -> FakeTransport:
+        nonlocal connections
+        del address, timeout
+        connections += 1
+        return transport
+
+    def receive(fix: GpsFix) -> None:
+        received.append(fix)
+        stop_event.set()
+
+    GpsdClient(transport_factory=factory).stream_fixes(receive, stop_event)
+
+    assert connections == 1
+    assert len(received) == 1
+    assert received[0].latitude == 1.1
+    assert received[0].accuracy_m == 5.0
+
+
+def test_stream_does_not_reuse_stale_accuracy() -> None:
+    stop_event = Event()
+    received: list[GpsFix] = []
+    monotonic_times = iter([100.0, 111.0])
+
+    class StopOnEofTransport(FakeTransport):
+        def recv(self, size: int) -> bytes:
+            chunk = super().recv(size)
+            if not chunk:
+                stop_event.set()
+            return chunk
+
+    transport = StopOnEofTransport(
+        [
+            b'{"class":"TPV","epx":3.0,"epy":4.0}\n',
+            b'{"class":"TPV","mode":3,"lat":1.0,"lon":2.0,"time":"2026-01-01T12:00:00Z"}\n',
+            b"",
+        ]
+    )
+
+    def factory(address: tuple[str, int], timeout: float) -> FakeTransport:
+        del address, timeout
+        return transport
+
+    client = GpsdClient(
+        transport_factory=factory,
+        monotonic_clock=lambda: next(monotonic_times),
+    )
+    client.stream_fixes(received.append, stop_event, max_accuracy_age_seconds=10.0)
+
+    assert received == []
 
 
 @pytest.mark.parametrize(
@@ -193,3 +324,60 @@ def test_wait_for_fix_returns_none_after_timeout() -> None:
         assert cache.wait_for_fix(0.0) is None
     finally:
         cache.stop()
+
+
+def test_cache_stop_is_bounded_when_source_does_not_return(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    release_source = Event()
+
+    class BlockingSource:
+        def get_latest_fix(self) -> GpsFix | None:
+            release_source.wait()
+            return None
+
+    cache = CachedGpsFixProvider(
+        BlockingSource(),
+        stop_timeout_seconds=0.01,
+    )
+    cache.start()
+    try:
+        assert cache._thread is not None
+        cache.stop()
+        assert "gps_cache_stop_timeout" in caplog.text
+    finally:
+        release_source.set()
+
+
+def test_cache_stop_closes_gpsd_socket_and_joins_reader() -> None:
+    recv_started = Event()
+    recv_released = Event()
+
+    class BlockingTransport(FakeTransport):
+        def __init__(self) -> None:
+            super().__init__([])
+
+        def recv(self, size: int) -> bytes:
+            del size
+            recv_started.set()
+            recv_released.wait(1.0)
+            raise OSError("closed")
+
+        def shutdown(self, how: int) -> None:
+            del how
+            recv_released.set()
+
+        def close(self) -> None:
+            super().close()
+            recv_released.set()
+
+    transport = BlockingTransport()
+    client = GpsdClient(transport_factory=lambda address, timeout: transport)
+    cache = CachedGpsFixProvider(client, stop_timeout_seconds=0.5)
+
+    cache.start()
+    assert recv_started.wait(1.0)
+    cache.stop()
+
+    assert transport.closed
+    assert cache._thread is None

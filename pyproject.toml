@@ -26,6 +26,9 @@ dependencies = [
     "streamlit-folium",
 ]
 
+[project.scripts]
+cyberbrein = "cyberbrein.workflow:main"
+
 [project.optional-dependencies]
 dev = [
     "pypdf",

@@ -162,9 +162,25 @@ def test_prepare_failure_attempts_to_restore_original_state() -> None:
     runner = FakeRunner(failing_command=failing_command)
     manager = InterfaceManager(SYNTHETIC_INTERFACE, command_runner=runner, environment={})
 
-    with pytest.raises(InterfaceError, match="interface_command_failed"):
+    with pytest.raises(InterfaceError, match="interface_monitor_failed"):
         manager.prepare()
 
     assert runner.interface_type == "managed"
     assert runner.connected is True
     assert runner.managed_by_network_manager is True
+
+
+def test_failed_optional_reconnect_does_not_hide_successful_restore(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    reconnect = ["nmcli", "device", "connect", SYNTHETIC_INTERFACE]
+    runner = FakeRunner(failing_command=reconnect)
+    manager = InterfaceManager(SYNTHETIC_INTERFACE, command_runner=runner, environment={})
+
+    manager.prepare()
+    manager.restore()
+
+    assert runner.interface_type == "managed"
+    assert runner.managed_by_network_manager is True
+    assert runner.connected is False
+    assert "interface_reconnect_failed" in caplog.text

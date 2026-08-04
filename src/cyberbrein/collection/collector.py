@@ -1,4 +1,6 @@
 import logging
+import math
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -51,6 +53,8 @@ class CollectionSummary:
     stored_observations: int
     unsupported_packets: int
     missing_gps_fixes: int
+    missing_gps_accuracy: int
+    excessive_gps_accuracy: int
 
 
 def _utc_now() -> datetime:
@@ -66,33 +70,45 @@ class CollectorService:
         channel_hopper: Hopper | None = None,
         *,
         require_gps_fix: bool = False,
+        max_gps_accuracy_m: float | None = None,
         frame_parser: FrameParser | None = None,
         clock: Clock = _utc_now,
+        monotonic_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not measurement_round_id.strip():
             raise ValueError("measurement_round_id is required")
         if require_gps_fix and gpsd_client is None:
             raise ValueError("gpsd_client is required when GPS fix is mandatory")
+        if max_gps_accuracy_m is not None and (
+            not math.isfinite(max_gps_accuracy_m) or max_gps_accuracy_m < 0
+        ):
+            raise ValueError("max_gps_accuracy_m must be finite and non-negative")
 
         self._measurement_round_id = measurement_round_id
         self._writer = writer
         self._gpsd_client = gpsd_client
         self._channel_hopper = channel_hopper
         self._require_gps_fix = require_gps_fix
+        self._max_gps_accuracy_m = max_gps_accuracy_m
         if frame_parser is None:
             from cyberbrein.collection.frame_parser import parse_wifi_frame
 
             frame_parser = parse_wifi_frame
         self._frame_parser = frame_parser
         self._clock = clock
+        self._monotonic_clock = monotonic_clock
+        self._last_progress_at = monotonic_clock()
         self._received_packets = 0
         self._stored_observations = 0
         self._unsupported_packets = 0
         self._missing_gps_fixes = 0
+        self._missing_gps_accuracy = 0
+        self._excessive_gps_accuracy = 0
 
     def process_packet(self, packet: object) -> None:
         """Parse and persist one packet when it satisfies the collection policy."""
         self._received_packets += 1
+        self._log_progress_if_due()
         try:
             metadata = self._frame_parser(packet, self._clock())
         except Exception as error:
@@ -106,6 +122,14 @@ class CollectorService:
         gps_fix = self._get_gps_fix()
         if gps_fix is None:
             self._missing_gps_fixes += 1
+            if self._require_gps_fix:
+                return
+        elif gps_fix.accuracy_m is None:
+            self._missing_gps_accuracy += 1
+            if self._require_gps_fix:
+                return
+        elif self._max_gps_accuracy_m is not None and gps_fix.accuracy_m > self._max_gps_accuracy_m:
+            self._excessive_gps_accuracy += 1
             if self._require_gps_fix:
                 return
 
@@ -167,10 +191,13 @@ class CollectorService:
 
         summary = self.summary()
         logger.info(
-            "collection_finished stored=%d unsupported=%d missing_gps=%d",
+            "collection_finished stored=%d unsupported=%d missing_gps=%d "
+            "missing_accuracy=%d excessive_accuracy=%d",
             summary.stored_observations,
             summary.unsupported_packets,
             summary.missing_gps_fixes,
+            summary.missing_gps_accuracy,
+            summary.excessive_gps_accuracy,
         )
         return summary
 
@@ -180,6 +207,24 @@ class CollectorService:
             stored_observations=self._stored_observations,
             unsupported_packets=self._unsupported_packets,
             missing_gps_fixes=self._missing_gps_fixes,
+            missing_gps_accuracy=self._missing_gps_accuracy,
+            excessive_gps_accuracy=self._excessive_gps_accuracy,
+        )
+
+    def _log_progress_if_due(self) -> None:
+        now = self._monotonic_clock()
+        if now - self._last_progress_at < 10.0:
+            return
+        self._last_progress_at = now
+        logger.info(
+            "collection_progress received=%d stored=%d unsupported=%d missing_gps=%d "
+            "missing_accuracy=%d excessive_accuracy=%d",
+            self._received_packets,
+            self._stored_observations,
+            self._unsupported_packets,
+            self._missing_gps_fixes,
+            self._missing_gps_accuracy,
+            self._excessive_gps_accuracy,
         )
 
     def _get_gps_fix(self) -> GpsFix | None:

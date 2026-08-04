@@ -1,3 +1,4 @@
+import logging
 import os
 import subprocess
 from collections.abc import Mapping
@@ -61,11 +62,26 @@ class InterfaceManager:
         self._changed = True
         try:
             if self._was_connected:
-                self._run(["nmcli", "device", "disconnect", self._interface])
-            self._run(["nmcli", "device", "set", self._interface, "managed", "no"])
-            self._run(["ip", "link", "set", self._interface, "down"])
-            self._run(["iw", "dev", self._interface, "set", "type", "monitor"])
-            self._run(["ip", "link", "set", self._interface, "up"])
+                self._run(
+                    ["nmcli", "device", "disconnect", self._interface],
+                    failure_category="interface_disconnect_failed",
+                )
+            self._run(
+                ["nmcli", "device", "set", self._interface, "managed", "no"],
+                failure_category="interface_unmanage_failed",
+            )
+            self._run(
+                ["ip", "link", "set", self._interface, "down"],
+                failure_category="interface_down_failed",
+            )
+            self._run(
+                ["iw", "dev", self._interface, "set", "type", "monitor"],
+                failure_category="interface_monitor_failed",
+            )
+            self._run(
+                ["ip", "link", "set", self._interface, "up"],
+                failure_category="interface_up_failed",
+            )
             if self._interface_type() != "monitor":
                 raise InterfaceError("interface_monitor_verification_failed")
         except Exception as error:
@@ -86,8 +102,6 @@ class InterfaceManager:
             ["ip", "link", "set", self._interface, "up"],
             ["nmcli", "device", "set", self._interface, "managed", "yes"],
         ]
-        if self._was_connected:
-            commands.append(["nmcli", "device", "connect", self._interface])
         for command in commands:
             try:
                 self._run(command)
@@ -99,6 +113,12 @@ class InterfaceManager:
         if failed:
             raise InterfaceError("interface_restore_failed")
         self._changed = False
+
+        if self._was_connected:
+            try:
+                self._run(["nmcli", "device", "connect", self._interface])
+            except InterfaceError:
+                logging.warning("interface_reconnect_failed")
 
     def _restore_after_prepare_failure(self) -> None:
         try:
@@ -137,7 +157,12 @@ class InterfaceManager:
         result = self._run(["ip", "-o", "addr", "show", "dev", self._interface])
         return f" {server_ip}/" in result.stdout
 
-    def _run(self, command: list[str]) -> _CommandResult:
+    def _run(
+        self,
+        command: list[str],
+        *,
+        failure_category: str = "interface_command_failed",
+    ) -> _CommandResult:
         try:
             result = self._command_runner(
                 command,
@@ -149,5 +174,5 @@ class InterfaceManager:
         except OSError as error:
             raise InterfaceError("interface_command_unavailable") from error
         if result.returncode != 0:
-            raise InterfaceError("interface_command_failed")
+            raise InterfaceError(failure_category)
         return result

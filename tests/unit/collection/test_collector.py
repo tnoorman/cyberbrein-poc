@@ -130,6 +130,30 @@ def test_missing_required_gps_fix_is_not_stored() -> None:
     assert service.summary().missing_gps_fixes == 1
 
 
+def test_required_gps_fix_above_accuracy_limit_is_not_stored() -> None:
+    writer = FakeWriter()
+    inaccurate_fix = GpsFix(
+        latitude=0.0,
+        longitude=0.0,
+        mode=3,
+        accuracy_m=25.1,
+        observed_at_utc=OBSERVED_AT_UTC,
+    )
+    service = CollectorService(
+        measurement_round_id="synthetic-round-collector",
+        writer=writer,
+        gpsd_client=FakeGpsdClient(inaccurate_fix),
+        require_gps_fix=True,
+        max_gps_accuracy_m=25.0,
+        frame_parser=lambda packet, observed_at: _metadata(),
+    )
+
+    service.process_packet(object())
+
+    assert writer.observations == []
+    assert service.summary().excessive_gps_accuracy == 1
+
+
 def test_unsupported_packet_is_not_stored() -> None:
     writer = FakeWriter()
     service = CollectorService(
