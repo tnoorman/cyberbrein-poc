@@ -8,7 +8,16 @@ uitsluitend aantallen en veilige afwijzingscategorieën.
 
 Kopieer bij de eerste ingebruikname `.env.example` naar `.env`, stel minimaal
 `CYBERBREIN_INTERFACE` in en plaats het goedgekeurde zonebestand op het geconfigureerde pad. Start
-daarna Collection, Pipeline en het dashboard samen met:
+daarna de eenmalige monitorconfiguratie. De managementadapter (standaard `wlan0`) wordt expliciet
+beschermd; alleen de capture-adapter wordt unmanaged en bij elke boot in monitor mode gezet. Na
+loskoppelen en opnieuw aansluiten activeert een udev-regel dezelfde monitorservice opnieuw.
+
+```bash
+sudo ./cyberbrein setup-monitor --interface wlan1
+```
+
+Controleer dat dit commando succesvol eindigt. Start daarna Collection, Pipeline en het dashboard
+samen met:
 
 ```bash
 ./cyberbrein run
@@ -16,6 +25,9 @@ daarna Collection, Pipeline en het dashboard samen met:
 
 Start de launcher zelf zonder `sudo`. Bij de start van Collection vraagt de launcher eenmaal om
 het sudo-wachtwoord; Pipeline en het dashboard draaien daarna weer als de normale gebruiker.
+`./cyberbrein run` weigert in de standaard `persistent-monitor`-modus een adapter die niet al in
+monitor mode staat, voordat runtimebestanden worden gemaakt. Daardoor wordt configuratiedrift niet
+stilzwijgend tijdens een meetronde hersteld.
 
 De launcher maakt zelf een UTC-meetronde-ID en cryptografisch mode-600-secret. Alleen Collection
 draait via `sudo`; Pipeline en Streamlit blijven onder de normale gebruiker draaien. Na
@@ -72,8 +84,8 @@ bestaan. Geef het nooit als CLI-argumentwaarde door en toon de inhoud niet.
 
 ## Collection uitvoeren
 
-Start vanaf een dedicated adapter in managed mode. Collection regelt monitor mode en herstel
-automatisch.
+Start vanaf de vooraf geconfigureerde dedicated adapter in monitor mode. Collection laat deze
+adapter na afloop in monitor mode staan.
 
 ```bash
 SOURCE_DB="data/smoke/${ROUND_ID}.sqlite"
@@ -85,12 +97,24 @@ sudo -n /home/cyberbrein/poc/.venv/bin/python \
   --measurement-round-id "$ROUND_ID" \
   --channels 36,40,44,48 \
   --duration 60 \
+  --no-auto-monitor \
   --gpsd \
   --require-gps-fix
 ```
 
 Ga alleen verder bij exitcode `0`, een duidelijk bruikbaar aantal waarnemingen en geen
 structureel ontbrekende GPS-fixes.
+
+Voor tijdelijke compatibiliteit kan `CYBERBREIN_INTERFACE_LIFECYCLE=temporary` worden gebruikt.
+In die modus schakelt Collection de adapter per run van managed naar monitor en terug. De
+veiligheidscontrole gebruikt uitsluitend de lokale IPv4/IPv6-routingtabel en werkt dus ook zonder
+internetverbinding. Persistent monitor mode blijft aanbevolen voor dedicated adapters.
+
+Om een capture-adapter weer aan NetworkManager terug te geven:
+
+```bash
+sudo ./cyberbrein teardown-monitor --interface wlan1
+```
 
 ## PostGIS-configuratie
 
