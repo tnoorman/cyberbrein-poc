@@ -14,6 +14,8 @@ from cyberbrein.processing.models import (
 )
 from cyberbrein.storage.repository import StorageRepository
 
+APP_PATH = Path(__file__).resolve().parents[3] / "src/cyberbrein/presentation/app.py"
+
 
 def test_delete_dialog_requires_confirmation_and_removes_round(
     clean_postgis: str,
@@ -34,7 +36,7 @@ def test_delete_dialog_requires_confirmation_and_removes_round(
         str(tmp_path / "operations.jsonl"),
     )
 
-    app = AppTest.from_file("src/cyberbrein/presentation/app.py").run()
+    app = AppTest.from_file(APP_PATH).run()
     assert not app.exception
 
     delete_button = next(button for button in app.button if button.label == "Meetdata verwijderen")
@@ -100,7 +102,7 @@ def test_selected_finding_opens_dedicated_explainable_detail(
     storage.close()
     monkeypatch.setenv("CYBERBREIN_DATABASE_URL", clean_postgis)
 
-    app = AppTest.from_file("src/cyberbrein/presentation/app.py")
+    app = AppTest.from_file(APP_PATH)
     app.session_state["selected_network_id"] = "abcdefghijklmnop"
     app.run()
 
@@ -128,7 +130,7 @@ def test_pdf_action_opens_preview_with_download(
     storage.close()
     monkeypatch.setenv("CYBERBREIN_DATABASE_URL", clean_postgis)
 
-    app = AppTest.from_file("src/cyberbrein/presentation/app.py").run()
+    app = AppTest.from_file(APP_PATH).run()
     export_button = next(button for button in app.button if button.label == "Exporteer PDF")
     export_button.click().run(timeout=15)
 
@@ -156,7 +158,7 @@ def test_filter_form_only_changes_results_after_apply_and_can_reset(
     storage.close()
     monkeypatch.setenv("CYBERBREIN_DATABASE_URL", clean_postgis)
 
-    app = AppTest.from_file("src/cyberbrein/presentation/app.py").run()
+    app = AppTest.from_file(APP_PATH).run()
     zone_filter = next(widget for widget in app.multiselect if widget.label == "Zone")
     zone_filter.select("zone-a").run()
 
