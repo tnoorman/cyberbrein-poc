@@ -13,6 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from cyberbrein.collection.gpsd_client import GpsdClient
+from cyberbrein.collection.monitor_setup import MonitorProvisioner, MonitorSetupError
 from cyberbrein.pipeline.cli import UNUSABLE_SOURCE_EXIT, cleanup_runtime_inputs
 from cyberbrein.pipeline.models import PipelineRuntimeError
 from cyberbrein.pipeline.runtime_config import RuntimeConfigurationError, load_approved_zones
@@ -35,6 +36,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--interface",
         default=os.environ.get("CYBERBREIN_INTERFACE"),
         help="Dedicated Wi-Fi interface (or set CYBERBREIN_INTERFACE).",
+    )
+    run.add_argument(
+        "--management-interface",
+        default=os.environ.get("CYBERBREIN_MANAGEMENT_INTERFACE", "wlan0"),
+        help="Wi-Fi interface reserved for connectivity/AP use (default: wlan0).",
+    )
+    run.add_argument(
+        "--interface-lifecycle",
+        choices=("persistent-monitor", "temporary"),
+        default=os.environ.get(
+            "CYBERBREIN_INTERFACE_LIFECYCLE",
+            "persistent-monitor",
+        ),
+        help="Capture-interface lifecycle (default: persistent-monitor).",
     )
     run.add_argument(
         "--channels",
@@ -105,6 +120,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Confirm permanent deletion of the preserved inputs.",
     )
+
+    for command, help_text in (
+        ("setup-monitor", "Persistently dedicate a Wi-Fi interface to monitor mode."),
+        ("teardown-monitor", "Return a persistently configured interface to managed mode."),
+    ):
+        monitor_command = subparsers.add_parser(command, help=help_text)
+        monitor_command.add_argument(
+            "--interface",
+            default=os.environ.get("CYBERBREIN_INTERFACE"),
+            required=os.environ.get("CYBERBREIN_INTERFACE") is None,
+            help="Dedicated capture interface (or set CYBERBREIN_INTERFACE).",
+        )
+        monitor_command.add_argument(
+            "--management-interface",
+            default=os.environ.get("CYBERBREIN_MANAGEMENT_INTERFACE", "wlan0"),
+            help="Protected connectivity/AP interface (default: wlan0).",
+        )
     return parser
 
 
@@ -126,7 +158,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
+    is_root = hasattr(os, "geteuid") and os.geteuid() == 0
+    if args.command in {"setup-monitor", "teardown-monitor"}:
+        if not is_root:
+            print(
+                f"Voer deze eenmalige systeemconfiguratie uit met sudo: sudo ./cyberbrein "
+                f"{args.command} --interface {args.interface}",
+                file=sys.stderr,
+            )
+            return 2
+        return _configure_monitor_interface(args, setup=args.command == "setup-monitor")
+
+    if is_root:
         print(
             "Start de launcher zonder sudo: ./cyberbrein "
             f"{args.command}. Alleen Collection vraagt daarna om sudo.",
@@ -167,6 +210,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     _validate_run_arguments(parser, args)
     round_id = args.round_id or _new_round_id()
     source_path, secret_path, zones_path = _runtime_paths(parser, round_id, args.zones)
+    if args.interface_lifecycle == "persistent-monitor" and not _monitor_interface_ready(
+        args.interface
+    ):
+        return 2
     if not _gps_quality_ready(args.max_gps_accuracy):
         return 2
 
@@ -199,6 +246,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--max-gps-accuracy",
         str(args.max_gps_accuracy),
     ]
+    if args.interface_lifecycle == "persistent-monitor":
+        collection_command.append("--no-auto-monitor")
     print(f"Meetronde gestart: {round_id}")
     collection_exit = _run(collection_command, environment)
     if collection_exit != 0:
@@ -270,6 +319,8 @@ def _validate_run_arguments(parser: argparse.ArgumentParser, args: argparse.Name
         parser.error("--interface is required (or set CYBERBREIN_INTERFACE)")
     if not math.isfinite(args.duration) or args.duration <= 0:
         parser.error("--duration must be positive")
+    if args.interface == args.management_interface:
+        parser.error("capture interface must differ from --management-interface")
     _validate_processing_arguments(parser, args)
     if args.round_id and ROUND_ID_PATTERN.fullmatch(args.round_id) is None:
         parser.error("--round-id may contain only letters, digits, dots, underscores, and hyphens")
@@ -322,6 +373,47 @@ def _gps_quality_ready(max_gps_accuracy: float) -> bool:
         )
         return False
     return True
+
+
+def _monitor_interface_ready(interface: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["iw", "dev", interface, "info"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        result = None
+    if result is not None and result.returncode == 0:
+        for line in result.stdout.splitlines():
+            if line.strip() == "type monitor":
+                return True
+    print(
+        f"Workflow gestopt: {interface} is niet persistent in monitor mode.\n"
+        f"Eenmalige setup: sudo ./cyberbrein setup-monitor --interface {interface}",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _configure_monitor_interface(args: argparse.Namespace, *, setup: bool) -> int:
+    try:
+        provisioner = MonitorProvisioner(
+            args.interface,
+            args.management_interface,
+        )
+        if setup:
+            provisioner.setup()
+            print(f"Persistente monitor mode actief voor: {args.interface}")
+        else:
+            provisioner.teardown()
+            print(f"Managed mode hersteld voor: {args.interface}")
+    except MonitorSetupError as error:
+        print(f"Monitorconfiguratie mislukt: {error.category}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def _create_runtime_inputs(source_path: Path, secret_path: Path) -> None:

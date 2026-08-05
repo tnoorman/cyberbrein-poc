@@ -14,6 +14,7 @@ class FakeRunner:
         interface_type: str = "managed",
         connected: bool = True,
         route_interface: str = "synthetic-ethernet0",
+        ipv6_route_interface: str = "synthetic-ethernet0",
         addresses: str = "",
         failing_command: list[str] | None = None,
     ) -> None:
@@ -21,6 +22,7 @@ class FakeRunner:
         self.connected = connected
         self.managed_by_network_manager = True
         self.route_interface = route_interface
+        self.ipv6_route_interface = ipv6_route_interface
         self.addresses = addresses
         self.failing_command = failing_command
         self.commands: list[list[str]] = []
@@ -47,8 +49,14 @@ class FakeRunner:
     def _handle(self, command: list[str]) -> str:
         if command == ["iw", "dev", SYNTHETIC_INTERFACE, "info"]:
             return f"Interface {SYNTHETIC_INTERFACE}\n\ttype {self.interface_type}\n"
-        if command == ["ip", "route", "get", "1.1.1.1"]:
-            return f"1.1.1.1 via 192.0.2.1 dev {self.route_interface} src 192.0.2.2\n"
+        if command == ["ip", "-4", "route", "show", "default", "dev", SYNTHETIC_INTERFACE]:
+            if self.route_interface == SYNTHETIC_INTERFACE:
+                return f"default via 192.0.2.1 dev {SYNTHETIC_INTERFACE}\n"
+            return ""
+        if command == ["ip", "-6", "route", "show", "default", "dev", SYNTHETIC_INTERFACE]:
+            if self.ipv6_route_interface == SYNTHETIC_INTERFACE:
+                return f"default via 2001:db8::1 dev {SYNTHETIC_INTERFACE}\n"
+            return ""
         if command == ["ip", "-o", "addr", "show", "dev", SYNTHETIC_INTERFACE]:
             return self.addresses
         if command == [
@@ -136,6 +144,29 @@ def test_selected_default_route_is_never_modified() -> None:
 
     assert runner.interface_type == "managed"
     assert ["nmcli", "device", "disconnect", SYNTHETIC_INTERFACE] not in runner.commands
+
+
+def test_selected_ipv6_default_route_is_never_modified() -> None:
+    runner = FakeRunner(ipv6_route_interface=SYNTHETIC_INTERFACE)
+    manager = InterfaceManager(SYNTHETIC_INTERFACE, command_runner=runner, environment={})
+
+    with pytest.raises(InterfaceError, match="interface_in_use"):
+        manager.prepare()
+
+    assert runner.interface_type == "managed"
+
+
+def test_no_default_route_is_safe_while_offline() -> None:
+    runner = FakeRunner(
+        connected=False,
+        route_interface="",
+        ipv6_route_interface="",
+    )
+    manager = InterfaceManager(SYNTHETIC_INTERFACE, command_runner=runner, environment={})
+
+    manager.prepare()
+
+    assert runner.interface_type == "monitor"
 
 
 def test_interface_carrying_current_ssh_session_is_never_modified() -> None:

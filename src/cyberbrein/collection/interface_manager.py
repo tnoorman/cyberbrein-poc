@@ -139,12 +139,14 @@ class InterfaceManager:
         return result.stdout.strip().startswith("100")
 
     def _is_selected_default_route(self) -> bool:
-        result = self._run(["ip", "route", "get", "1.1.1.1"])
-        tokens = result.stdout.split()
-        return any(
-            token == "dev" and index + 1 < len(tokens) and tokens[index + 1] == self._interface
-            for index, token in enumerate(tokens)
-        )
+        for family in ("-4", "-6"):
+            result = self._run(
+                ["ip", family, "route", "show", "default", "dev", self._interface],
+                failure_category="interface_route_check_failed",
+            )
+            if result.stdout.strip():
+                return True
+        return False
 
     def _carries_current_ssh_session(self) -> bool:
         ssh_connection = self._environment.get("SSH_CONNECTION")

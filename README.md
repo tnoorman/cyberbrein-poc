@@ -23,11 +23,16 @@ Voor normaal gebruik hoeft de volledige keten maar één keer geconfigureerd te 
 ```bash
 cp .env.example .env
 # Pas in .env minimaal CYBERBREIN_INTERFACE aan en plaats data/local/zones.geojson.
+sudo ./cyberbrein setup-monitor --interface wlan1
 ./cyberbrein run
 ```
 
 Start dit commando zonder `sudo`; de launcher vraagt alleen voor de Collection-stap om het
 sudo-wachtwoord.
+
+De eenmalige setup houdt `wlan0` beschikbaar voor netwerktoegang of een access point en maakt
+alleen de geconfigureerde externe adapter persistent unmanaged/in monitor mode. Ongedaan maken kan
+met `sudo ./cyberbrein teardown-monitor --interface wlan1`.
 
 Dit maakt automatisch een meetronde-ID en mode-600-secret, voert Collection en Pipeline uit,
 verwijdert de tijdelijke buffer en het secret uitsluitend na geverifieerde opslag, en start daarna
