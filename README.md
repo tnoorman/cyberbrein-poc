@@ -42,6 +42,9 @@ Na een onderbreking kan een door de launcher bewaarde meetronde worden hervat me
 `./cyberbrein resume <meetronde-id>`-commando. Een geldige maar onbruikbare buffer wordt niet als
 hervatbaar gepresenteerd; verwijder die expliciet met het getoonde
 `./cyberbrein discard <meetronde-id> --yes`-commando.
+Als Storage wel is geverifieerd maar cleanup mislukt, blijven de resultaten via
+`./cyberbrein dashboard` beschikbaar en biedt de launcher uitsluitend `discard` aan voor de
+resterende tijdelijke invoer; opnieuw verwerken is dan niet toegestaan.
 
 Zie [`docs/phase-03-runtime-runbook.md`](docs/phase-03-runtime-runbook.md) voor configuratie,
 veilig herstel en de afzonderlijke onderliggende commando's. Zie

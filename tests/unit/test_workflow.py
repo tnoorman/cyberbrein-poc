@@ -233,6 +233,57 @@ def test_unusable_buffer_is_not_presented_as_recoverable(
     assert "resume unusable-round" not in output
 
 
+def test_verified_storage_with_incomplete_cleanup_is_not_reprocessed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_zone_file(tmp_path / "data/local/zones.geojson")
+    source = tmp_path / "data/smoke/stored-round.sqlite"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"preserved")
+    source.chmod(0o600)
+    secret = tmp_path / "data/local/stored-round.secret"
+    secret.write_text("s" * 64, encoding="utf-8")
+    secret.chmod(0o600)
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess_result(workflow.CLEANUP_EXIT),
+    )
+
+    assert workflow.main(["resume", "stored-round", "--no-dashboard"]) == 4
+
+    output = capsys.readouterr().out
+    assert "opgeslagen en geverifieerd" in output
+    assert "dashboard" in output
+    assert "discard stored-round --yes" in output
+    assert "resume stored-round" not in output
+
+
+@pytest.mark.parametrize("missing", ("source", "secret"))
+def test_discard_finishes_partial_cleanup(
+    missing: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "data/smoke/partial-round.sqlite"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"raw")
+    source.chmod(0o600)
+    secret = tmp_path / "data/local/partial-round.secret"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("s" * 64, encoding="utf-8")
+    secret.chmod(0o600)
+    (source if missing == "source" else secret).unlink()
+
+    assert workflow.main(["discard", "partial-round", "--yes"]) == 0
+    assert not source.exists()
+    assert not secret.exists()
+
+
 def test_discard_deletes_explicitly_confirmed_runtime_inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

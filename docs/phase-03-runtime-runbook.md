@@ -189,7 +189,9 @@ Verwacht een verwijderde bronbuffer en secret, drie scorefactoren per netwerkvon
 - Bij exitcode `2` of `3` worden bronbuffer en secret niet verwijderd.
 - Bij exitcode `5` blijven bronbuffer en secret staan. Controleer de meetronde-ID en verwijder ze
   daarna expliciet met `./cyberbrein discard <meetronde-id> --yes`.
-- Bij exitcode `4` moet expliciet worden vastgesteld welke invoer nog bestaat; meld de run niet
-  als volledig afgerond.
+- Bij exitcode `4` is Storage geverifieerd, maar is cleanup onvolledig. Voer de verwerking niet
+  opnieuw uit. Bekijk de opgeslagen resultaten met `./cyberbrein dashboard`, controleer de door de
+  launcher genoemde resterende paden en verwijder de tijdelijke invoer daarna met
+  `./cyberbrein discard <meetronde-id> --yes`.
 - SQLite-sidecars `-journal`, `-wal` en `-shm` worden, indien aanwezig, samen met de bronbuffer
   verwijderd.

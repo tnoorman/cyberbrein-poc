@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from cyberbrein.collection.gpsd_client import GpsdClient
 from cyberbrein.collection.monitor_setup import MonitorProvisioner, MonitorSetupError
-from cyberbrein.pipeline.exit_codes import UNUSABLE_SOURCE_EXIT
+from cyberbrein.pipeline.exit_codes import CLEANUP_EXIT, UNUSABLE_SOURCE_EXIT
 from cyberbrein.pipeline.models import PipelineRuntimeError
 from cyberbrein.pipeline.runtime_config import RuntimeConfigurationError, load_approved_zones
 from cyberbrein.pipeline.runtime_inputs import cleanup_runtime_inputs
@@ -304,7 +304,9 @@ def _process_round(
     ]
     pipeline_exit = _run(pipeline_command, environment)
     if pipeline_exit != 0:
-        if pipeline_exit == UNUSABLE_SOURCE_EXIT:
+        if pipeline_exit == CLEANUP_EXIT:
+            _print_incomplete_cleanup(source_path, secret_path)
+        elif pipeline_exit == UNUSABLE_SOURCE_EXIT:
             _print_unusable(source_path, secret_path)
         else:
             _print_recovery(source_path, secret_path)
@@ -513,6 +515,18 @@ def _print_unusable(source_path: Path, secret_path: Path) -> None:
     print(f"Verwijderen: ./cyberbrein discard {source_path.stem} --yes")
 
 
+def _print_incomplete_cleanup(source_path: Path, secret_path: Path) -> None:
+    print(
+        "Meetronde opgeslagen en geverifieerd, maar tijdelijke invoer is niet volledig verwijderd."
+    )
+    for label, path in (("Bronbuffer", source_path), ("Secret", secret_path)):
+        if path.exists() or path.is_symlink():
+            print(f"{label}: {path}")
+    print("Verwerking mag niet opnieuw worden uitgevoerd.")
+    print("Resultaten bekijken: ./cyberbrein dashboard")
+    print(f"Resterende invoer verwijderen: ./cyberbrein discard {source_path.stem} --yes")
+
+
 def _discard_round(parser: argparse.ArgumentParser, round_id: str, confirmed: bool) -> int:
     if ROUND_ID_PATTERN.fullmatch(round_id) is None:
         parser.error("round ID may contain only letters, digits, dots, underscores, and hyphens")
@@ -521,7 +535,7 @@ def _discard_round(parser: argparse.ArgumentParser, round_id: str, confirmed: bo
     source_path = Path("data/smoke") / f"{round_id}.sqlite"
     secret_path = Path("data/local") / f"{round_id}.secret"
     try:
-        cleanup_runtime_inputs(source_path, secret_path)
+        cleanup_runtime_inputs(source_path, secret_path, missing_ok=True)
     except PipelineRuntimeError:
         print("Verwijderen mislukt: ongeldige of ontbrekende runtimebestanden.", file=sys.stderr)
         return 2
