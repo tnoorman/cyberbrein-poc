@@ -41,3 +41,13 @@ GPSD-stream wordt aangeboden als een actuele pull-georiënteerde GPS-fix voor Co
 
 Nieuwe patronen worden alleen toegevoegd wanneer een bestaand probleem, een tweede consument of
 een tweede productie-implementatie de extra abstractie rechtvaardigt.
+
+## Toegevoegde runtimepatronen
+
+- **Application Service:** `WorkflowService` maakt dezelfde orchestratielogica beschikbaar zonder
+  afhankelijkheid van de CLI-presentatie.
+- **Expliciete finite-state machine:** een enum en transitietabel modelleren de hersteltoestanden
+  van actieve meetrondes. Dit is bewust geen polymorfe GoF-State-implementatie; de toestanden
+  verschillen in toegestane transities, niet in omvangrijk toestandsspecifiek gedrag.
+
+De bijbehorende besluiten, alternatieven en trade-offs staan in `docs/adr/`.

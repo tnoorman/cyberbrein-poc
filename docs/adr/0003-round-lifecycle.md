@@ -1,6 +1,6 @@
 # ADR-0003: Persistente lifecycle en vastgezet verwerkingsbeleid
 
-- Status: Voorgesteld
+- Status: Geaccepteerd
 - Datum: 2026-08-06
 
 ## Context
@@ -44,3 +44,5 @@ naar een zonebestand bewaren lost dit niet op, omdat de inhoud op dat pad kan wi
 Een actieve ronde heeft tijdelijk twee extra private bestanden. Hervatten is reproduceerbaar en
 toestandsspecifiek. Beschadigde metadata vereist expliciete operatoractie in plaats van een
 mogelijk ruimer fallbackbeleid.
+De implementatie verwijdert beide bestanden na succes of discard, behoudt ze bij herstelbare
+fouten en weigert gewijzigde, ontbrekende of permissieve lifecyclemetadata gesloten.

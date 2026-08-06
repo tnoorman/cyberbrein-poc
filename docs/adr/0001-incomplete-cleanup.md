@@ -1,6 +1,6 @@
 # ADR-0001: Onvolledige cleanup na geverifieerde opslag
 
-- Status: Voorgesteld
+- Status: Geaccepteerd
 - Datum: 2026-08-06
 
 ## Context
@@ -35,3 +35,5 @@ van één bestand als fout wordt behandeld.
 
 De gebruiker krijgt toestandsspecifiek hersteladvies. `discard` moet veilig omgaan met een
 gedeeltelijk verwijderde set, terwijl symlinks en niet-reguliere bestanden afgewezen blijven.
+De implementatie behandelt exitcode 4 afzonderlijk, biedt geen `resume` aan en dekt gedeeltelijke
+cleanup met integratie- en launchertests af.

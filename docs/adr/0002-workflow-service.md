@@ -1,6 +1,6 @@
 # ADR-0002: CLI-vrije workflowcoördinatie
 
-- Status: Voorgesteld
+- Status: Geaccepteerd
 - Datum: 2026-08-06
 
 ## Context
@@ -34,3 +34,6 @@ Protocol-klasse voor ieder hulpfunctietje.
 CLI en toekomstige presentatie kunnen dezelfde applicatieservice gebruiken. De extra package- en
 request/outcome-typen vergroten de structuur, maar maken orchestratietests onafhankelijk van
 argparse en console-uitvoer.
+De gerealiseerde service gebruikt één command-runner, twee preflight-callables en één kleine
+event-callback voor de bestaande directe startmelding. Orchestratietests gebruiken deze seams
+zonder module-globals te patchen.
