@@ -6,14 +6,11 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .exit_codes import CLEANUP_EXIT, CONFIGURATION_EXIT, PIPELINE_EXIT, UNUSABLE_SOURCE_EXIT
 from .models import PipelineResult, PipelineRuntimeError
 from .runtime_config import RuntimeConfigurationError, load_approved_zones, load_secret
+from .runtime_inputs import cleanup_runtime_inputs
 from .service import PipelineService
-
-CONFIGURATION_EXIT = 2
-PIPELINE_EXIT = 3
-CLEANUP_EXIT = 4
-UNUSABLE_SOURCE_EXIT = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,29 +81,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         print("Ruwe invoer verwijderd: nee")
     return 0
-
-
-def cleanup_runtime_inputs(source_path: Path, secret_path: Path) -> None:
-    """Delete raw SQLite files and the secret only after verified processing."""
-    sidecars = tuple(
-        source_path.with_name(f"{source_path.name}{suffix}")
-        for suffix in ("-journal", "-wal", "-shm")
-    )
-    required = (source_path, secret_path)
-    optional = tuple(path for path in sidecars if path.exists() or path.is_symlink())
-    try:
-        for path in (*required, *optional):
-            file_status = path.lstat()
-            if stat.S_ISLNK(file_status.st_mode) or not stat.S_ISREG(file_status.st_mode):
-                raise PipelineRuntimeError("cleanup_failed")
-        for path in (*optional, source_path, secret_path):
-            path.unlink()
-        if any(path.exists() for path in (*optional, source_path, secret_path)):
-            raise PipelineRuntimeError("cleanup_failed")
-    except PipelineRuntimeError:
-        raise
-    except OSError as error:
-        raise PipelineRuntimeError("cleanup_failed") from error
 
 
 def _validate_source_path(source_path: Path) -> None:

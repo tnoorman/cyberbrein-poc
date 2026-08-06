@@ -6,8 +6,9 @@ import pytest
 
 from cyberbrein.collection.models import RawObservation
 from cyberbrein.collection.sqlite_writer import SQLiteObservationWriter
-from cyberbrein.pipeline.cli import cleanup_runtime_inputs, main
+from cyberbrein.pipeline.cli import main
 from cyberbrein.pipeline.models import PipelineRuntimeError
+from cyberbrein.pipeline.runtime_inputs import cleanup_runtime_inputs
 
 SYNTHETIC_BSSID = "02:00:00:00:00:99"
 SYNTHETIC_SSID = "SYNTHETIC-PRIVATE-NETWORK"
@@ -196,3 +197,31 @@ def test_cleanup_rejects_a_swapped_secret_symlink(tmp_path: Path) -> None:
 
     assert source.exists()
     assert secret_target.exists()
+
+
+@pytest.mark.parametrize("missing", ("source", "secret"))
+def test_discard_cleanup_tolerates_one_already_missing_input(
+    missing: str,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.sqlite"
+    secret = tmp_path / "round.secret"
+    source.touch()
+    _write_secret(secret)
+    (source if missing == "source" else secret).unlink()
+
+    cleanup_runtime_inputs(source, secret, missing_ok=True)
+
+    assert not source.exists()
+    assert not secret.exists()
+
+
+def test_normal_cleanup_rejects_a_missing_required_input(tmp_path: Path) -> None:
+    source = tmp_path / "source.sqlite"
+    secret = tmp_path / "round.secret"
+    source.touch()
+
+    with pytest.raises(PipelineRuntimeError, match="cleanup_failed"):
+        cleanup_runtime_inputs(source, secret)
+
+    assert source.exists()
