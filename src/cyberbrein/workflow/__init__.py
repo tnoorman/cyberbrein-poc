@@ -541,7 +541,3 @@ def _discard_round(parser: argparse.ArgumentParser, round_id: str, confirmed: bo
         return 2
     print(f"Ruwe invoer verwijderd voor meetronde: {round_id}")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
