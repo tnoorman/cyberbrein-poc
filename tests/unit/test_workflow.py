@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from cyberbrein import workflow
+from cyberbrein.workflow import cli as workflow
 
 
 def _write_zone_file(path: Path) -> None:
