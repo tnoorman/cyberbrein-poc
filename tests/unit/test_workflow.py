@@ -254,6 +254,73 @@ def test_root_invocation_is_rejected_before_starting_subprocess(
     assert workflow.main(["dashboard"]) == 2
 
 
+@pytest.mark.parametrize(
+    "round_id",
+    (
+        "../escape",
+        "nested/round",
+        "round with spaces",
+        "a" * 129,
+    ),
+)
+def test_unsafe_round_id_is_rejected_before_runtime_inputs(
+    round_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_zone_file(tmp_path / "data/local/zones.geojson")
+    monkeypatch.setenv("CYBERBREIN_INTERFACE", "wlan-test")
+
+    with pytest.raises(SystemExit, match="2"):
+        workflow.main(["run", "--round-id", round_id])
+
+    assert not (tmp_path / "data/smoke").exists()
+
+
+def test_missing_program_returns_127(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError),
+    )
+
+    assert workflow._run(["missing-program"], {}) == 127
+    assert "Benodigd programma niet gevonden" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("port", ("0", "65536"))
+def test_dashboard_rejects_invalid_port_before_starting_subprocess(
+    port: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("subprocess must not start"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        workflow.main(["dashboard", "--port", port])
+
+
+def test_dashboard_rejects_non_postgresql_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CYBERBREIN_DATABASE_URL", "sqlite:///unsafe.db")
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("subprocess must not start"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        workflow.main(["dashboard"])
+
+
 def test_persistent_monitor_preflight_stops_before_runtime_inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
