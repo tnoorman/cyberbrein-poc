@@ -42,6 +42,11 @@ Na een onderbreking kan een door de launcher bewaarde meetronde worden hervat me
 `./cyberbrein resume <meetronde-id>`-commando. Een geldige maar onbruikbare buffer wordt niet als
 hervatbaar gepresenteerd; verwijder die expliciet met het getoonde
 `./cyberbrein discard <meetronde-id> --yes`-commando.
+Voor iedere nieuwe actieve ronde bewaart de launcher tijdelijk een private snapshot van de
+goedgekeurde zones en het gekozen GPS-beleid. `resume` gebruikt altijd deze vastgezette waarden,
+ook wanneer `.env` of het oorspronkelijke zonebestand daarna verandert. Expliciete
+beleidsoverschrijvingen bij zo'n ronde worden geweigerd; oudere bewaarde rondes zonder
+lifecyclemetadata blijven compatibel.
 Als Storage wel is geverifieerd maar cleanup mislukt, blijven de resultaten via
 `./cyberbrein dashboard` beschikbaar en biedt de launcher uitsluitend `discard` aan voor de
 resterende tijdelijke invoer; opnieuw verwerken is dan niet toegestaan.

@@ -62,6 +62,9 @@ def test_run_sequences_collection_pipeline_and_dashboard(
     assert commands[2][2:4] == ["streamlit", "run"]
     assert modes == [(0o600, 0o600)]
     assert directory_modes == [(0o700, 0o700)]
+    assert commands[1][commands[1].index("--zones") + 1] == "data/local/test-round.zones.geojson"
+    assert not (tmp_path / "data/local/test-round.zones.geojson").exists()
+    assert not (tmp_path / "data/local/test-round.round.json").exists()
 
 
 def test_runtime_directory_symlink_is_rejected(
@@ -102,6 +105,8 @@ def test_collection_failure_removes_empty_runtime_inputs(
     assert workflow.main(["run", "--round-id", "failed-round"]) == 2
     assert not (tmp_path / "data/smoke/failed-round.sqlite").exists()
     assert not (tmp_path / "data/local/failed-round.secret").exists()
+    assert not (tmp_path / "data/local/failed-round.zones.geojson").exists()
+    assert not (tmp_path / "data/local/failed-round.round.json").exists()
 
 
 def test_collection_failure_keeps_nonempty_buffer_for_recovery(
@@ -125,6 +130,8 @@ def test_collection_failure_keeps_nonempty_buffer_for_recovery(
     assert workflow.main(["run", "--round-id", "recoverable-round"]) == 2
     assert (tmp_path / "data/smoke/recoverable-round.sqlite").exists()
     assert (tmp_path / "data/local/recoverable-round.secret").exists()
+    assert (tmp_path / "data/local/recoverable-round.zones.geojson").exists()
+    assert (tmp_path / "data/local/recoverable-round.round.json").exists()
 
 
 def test_invalid_zone_file_stops_before_runtime_inputs_are_created(

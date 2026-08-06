@@ -1,7 +1,6 @@
 import argparse
 import math
 import os
-import re
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -20,10 +19,11 @@ from cyberbrein.pipeline.exit_codes import (
 )
 from cyberbrein.pipeline.runtime_config import RuntimeConfigurationError, load_approved_zones
 
+from .round_state import ROUND_ID_PATTERN as ROUND_ID_PATTERN
+from .round_state import RoundPaths
 from .service import ResumeRequest, RoundOutcome, RunRequest, WorkflowEvent, WorkflowService
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg2:///cyberbrein_poc"
-ROUND_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -95,14 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("round_id", help="Measurement round ID shown by the failed workflow.")
     resume.add_argument(
         "--zones",
-        default=os.environ.get("CYBERBREIN_ZONES", "data/local/zones.geojson"),
-        help="Approved GeoJSON zone file.",
+        default=None,
+        help="Approved GeoJSON zone file for a legacy preserved round.",
     )
     resume.add_argument(
         "--max-gps-accuracy",
         type=float,
-        default=os.environ.get("CYBERBREIN_MAX_GPS_ACCURACY", "15"),
-        help="Maximum accepted GPS accuracy in metres (default: 15).",
+        default=None,
+        help="Maximum GPS accuracy for a legacy preserved round.",
     )
     resume.add_argument(
         "--no-dashboard",
@@ -206,21 +206,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "resume":
         _validate_processing_arguments(parser, args)
-        source_path, secret_path, zones_path = _runtime_paths(parser, args.round_id, args.zones)
-        if not source_path.is_file() or source_path.is_symlink():
-            parser.error(f"preserved source buffer not found: {source_path}")
-        if not secret_path.is_file() or secret_path.is_symlink():
-            parser.error(f"preserved secret not found: {secret_path}")
+        paths = RoundPaths.for_round(args.round_id)
+        if not paths.source.is_file() or paths.source.is_symlink():
+            parser.error(f"preserved source buffer not found: {paths.source}")
+        if not paths.secret.is_file() or paths.secret.is_symlink():
+            parser.error(f"preserved secret not found: {paths.secret}")
+        explicit_policy = args.zones is not None or args.max_gps_accuracy is not None
+        zones_path = Path(
+            args.zones or os.environ.get("CYBERBREIN_ZONES", "data/local/zones.geojson")
+        )
+        max_gps_accuracy = _legacy_resume_accuracy(parser, args.max_gps_accuracy)
         return _render_outcome(
             service.resume(
                 ResumeRequest(
                     round_id=args.round_id,
                     zones_path=zones_path,
-                    max_gps_accuracy=args.max_gps_accuracy,
+                    max_gps_accuracy=max_gps_accuracy,
                     database_url=database_url,
                     no_dashboard=args.no_dashboard,
                     address=args.address,
                     port=args.port,
+                    policy_override_requested=explicit_policy,
                 )
             )
         )
@@ -262,7 +268,9 @@ def _validate_run_arguments(parser: argparse.ArgumentParser, args: argparse.Name
 def _validate_processing_arguments(
     parser: argparse.ArgumentParser, args: argparse.Namespace
 ) -> None:
-    if not math.isfinite(args.max_gps_accuracy) or args.max_gps_accuracy < 0:
+    if args.max_gps_accuracy is not None and (
+        not math.isfinite(args.max_gps_accuracy) or args.max_gps_accuracy < 0
+    ):
         parser.error("--max-gps-accuracy must not be negative")
     if args.round_id is not None and ROUND_ID_PATTERN.fullmatch(args.round_id) is None:
         parser.error("round ID may contain only letters, digits, dots, underscores, and hyphens")
@@ -271,8 +279,7 @@ def _validate_processing_arguments(
 def _runtime_paths(
     parser: argparse.ArgumentParser, round_id: str, zones: str
 ) -> tuple[Path, Path, Path]:
-    source_path = Path("data/smoke") / f"{round_id}.sqlite"
-    secret_path = Path("data/local") / f"{round_id}.secret"
+    paths = RoundPaths.for_round(round_id)
     zones_path = Path(zones)
     if not zones_path.is_file() or zones_path.is_symlink():
         parser.error(f"approved zone file not found: {zones_path}")
@@ -280,7 +287,22 @@ def _runtime_paths(
         load_approved_zones(zones_path)
     except RuntimeConfigurationError:
         parser.error(f"approved zone file is invalid: {zones_path}")
-    return source_path, secret_path, zones_path
+    return paths.source, paths.secret, zones_path
+
+
+def _legacy_resume_accuracy(
+    parser: argparse.ArgumentParser,
+    explicit_accuracy: float | None,
+) -> float:
+    if explicit_accuracy is not None:
+        return explicit_accuracy
+    try:
+        accuracy = float(os.environ.get("CYBERBREIN_MAX_GPS_ACCURACY", "15"))
+    except ValueError:
+        parser.error("CYBERBREIN_MAX_GPS_ACCURACY must be a number")
+    if not math.isfinite(accuracy) or accuracy < 0:
+        parser.error("--max-gps-accuracy must not be negative")
+    return accuracy
 
 
 def _new_round_id() -> str:
@@ -353,6 +375,20 @@ def _render_outcome(outcome: RoundOutcome) -> int:
     elif outcome.guidance == "incomplete_cleanup":
         assert outcome.source_path is not None and outcome.secret_path is not None
         _print_incomplete_cleanup(outcome.source_path, outcome.secret_path)
+    elif outcome.guidance in {"invalid_round_state", "round_state_failed"}:
+        print(
+            f"Meetronde kan niet veilig worden hervat: {outcome.detail or 'invalid_round_state'}.",
+            file=sys.stderr,
+        )
+        print(f"Controleer of verwijder de ronde: ./cyberbrein discard {outcome.round_id} --yes")
+    elif outcome.guidance == "policy_override_rejected":
+        print(
+            "Deze meetronde heeft een vastgezet zone- en GPS-beleid; overrides bij resume zijn "
+            "niet toegestaan.",
+            file=sys.stderr,
+        )
+    elif outcome.guidance == "legacy_policy_invalid":
+        print("Het zonebeleid voor deze oudere meetronde is ongeldig.", file=sys.stderr)
     elif outcome.guidance == "processed":
         print("Meetronde verwerkt en tijdelijke invoer veilig verwijderd.")
     elif outcome.guidance == "discard_failed":
@@ -412,7 +448,13 @@ def _print_incomplete_cleanup(source_path: Path, secret_path: Path) -> None:
     print(
         "Meetronde opgeslagen en geverifieerd, maar tijdelijke invoer is niet volledig verwijderd."
     )
-    for label, path in (("Bronbuffer", source_path), ("Secret", secret_path)):
+    paths = RoundPaths.for_round(source_path.stem)
+    for label, path in (
+        ("Bronbuffer", source_path),
+        ("Secret", secret_path),
+        ("Zonesnapshot", paths.zones_snapshot),
+        ("Lifecycle-record", paths.state_record),
+    ):
         if path.exists() or path.is_symlink():
             print(f"{label}: {path}")
     print("Verwerking mag niet opnieuw worden uitgevoerd.")
