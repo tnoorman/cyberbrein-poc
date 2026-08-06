@@ -6,7 +6,7 @@ from cyberbrein import workflow
 
 
 def _write_zone_file(path: Path) -> None:
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         """{
             "type": "FeatureCollection",
@@ -36,6 +36,7 @@ def test_run_sequences_collection_pipeline_and_dashboard(
     monkeypatch.setattr(workflow, "_monitor_interface_ready", lambda interface: True)
     commands: list[list[str]] = []
     modes: list[tuple[int, int]] = []
+    directory_modes: list[tuple[int, int]] = []
 
     def fake_run(command: list[str], **_: object) -> subprocess_result:
         commands.append(command)
@@ -43,6 +44,9 @@ def test_run_sequences_collection_pipeline_and_dashboard(
             source = tmp_path / "data/smoke/test-round.sqlite"
             secret = tmp_path / "data/local/test-round.secret"
             modes.append((source.stat().st_mode & 0o777, secret.stat().st_mode & 0o777))
+            directory_modes.append(
+                (source.parent.stat().st_mode & 0o777, secret.parent.stat().st_mode & 0o777)
+            )
         return subprocess_result(0)
 
     monkeypatch.setattr(workflow.subprocess, "run", fake_run)
@@ -57,6 +61,27 @@ def test_run_sequences_collection_pipeline_and_dashboard(
     assert "--delete-source-on-success" in commands[1]
     assert commands[2][2:4] == ["streamlit", "run"]
     assert modes == [(0o600, 0o600)]
+    assert directory_modes == [(0o700, 0o700)]
+
+
+def test_runtime_directory_symlink_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    real_local = tmp_path / "real-local"
+    real_local.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "local").symlink_to(real_local, target_is_directory=True)
+    _write_zone_file(real_local / "zones.geojson")
+    monkeypatch.setenv("CYBERBREIN_INTERFACE", "wlan-test")
+    monkeypatch.setattr(workflow, "_gps_quality_ready", lambda max_accuracy: True)
+    monkeypatch.setattr(workflow, "_monitor_interface_ready", lambda interface: True)
+
+    assert workflow.main(["run", "--round-id", "unsafe-directory"]) == 2
+    assert not (tmp_path / "data/smoke/unsafe-directory.sqlite").exists()
+    assert not (real_local / "unsafe-directory.secret").exists()
 
 
 def test_collection_failure_removes_empty_runtime_inputs(

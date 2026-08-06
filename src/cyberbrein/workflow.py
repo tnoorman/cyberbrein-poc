@@ -4,6 +4,7 @@ import os
 import re
 import secrets
 import sqlite3
+import stat
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -417,8 +418,8 @@ def _configure_monitor_interface(args: argparse.Namespace, *, setup: bool) -> in
 
 
 def _create_runtime_inputs(source_path: Path, secret_path: Path) -> None:
-    source_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    secret_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _ensure_private_directory(source_path.parent)
+    _ensure_private_directory(secret_path.parent)
     if source_path.exists() or secret_path.exists():
         raise FileExistsError("runtimebestanden voor deze meetronde bestaan al")
 
@@ -433,6 +434,14 @@ def _create_runtime_inputs(source_path: Path, secret_path: Path) -> None:
         source_path.unlink(missing_ok=True)
         secret_path.unlink(missing_ok=True)
         raise
+
+
+def _ensure_private_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory_status = path.lstat()
+    if stat.S_ISLNK(directory_status.st_mode) or not stat.S_ISDIR(directory_status.st_mode):
+        raise OSError(f"unsafe runtime directory: {path}")
+    path.chmod(0o700)
 
 
 def _cleanup_empty_attempt(source_path: Path, secret_path: Path) -> bool:
