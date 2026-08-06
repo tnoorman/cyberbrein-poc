@@ -206,11 +206,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "resume":
         _validate_processing_arguments(parser, args)
-        paths = RoundPaths.for_round(args.round_id)
-        if not paths.source.is_file() or paths.source.is_symlink():
-            parser.error(f"preserved source buffer not found: {paths.source}")
-        if not paths.secret.is_file() or paths.secret.is_symlink():
-            parser.error(f"preserved secret not found: {paths.secret}")
         explicit_policy = args.zones is not None or args.max_gps_accuracy is not None
         zones_path = Path(
             args.zones or os.environ.get("CYBERBREIN_ZONES", "data/local/zones.geojson")
@@ -366,6 +361,12 @@ def _render_outcome(outcome: RoundOutcome) -> int:
         )
     elif outcome.guidance == "empty_attempt":
         print("Geen waarnemingen vastgelegd; lege runtimebestanden zijn verwijderd.")
+    elif outcome.guidance == "empty_cleanup_failed":
+        print(
+            "Geen waarnemingen vastgelegd, maar de lege runtimebundel kon niet volledig worden "
+            "verwijderd."
+        )
+        print(f"Resterende invoer verwijderen: ./cyberbrein discard {outcome.round_id} --yes")
     elif outcome.guidance == "recovery":
         assert outcome.source_path is not None and outcome.secret_path is not None
         _print_recovery(outcome.source_path, outcome.secret_path)
@@ -389,6 +390,11 @@ def _render_outcome(outcome: RoundOutcome) -> int:
         )
     elif outcome.guidance == "legacy_policy_invalid":
         print("Het zonebeleid voor deze oudere meetronde is ongeldig.", file=sys.stderr)
+    elif outcome.guidance == "preserved_inputs_missing":
+        print(
+            "De bewaarde bronbuffer of het bijbehorende secret ontbreekt of is onveilig.",
+            file=sys.stderr,
+        )
     elif outcome.guidance == "processed":
         print("Meetronde verwerkt en tijdelijke invoer veilig verwijderd.")
     elif outcome.guidance == "discard_failed":

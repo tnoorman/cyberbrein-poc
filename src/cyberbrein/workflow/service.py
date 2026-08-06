@@ -144,7 +144,7 @@ class WorkflowService:
                     cleanup_policy_inputs(paths, self._state_store)
                     guidance = "empty_attempt"
                 except (OSError, RoundStateError):
-                    guidance = "recovery"
+                    guidance = "empty_cleanup_failed"
             return RoundOutcome(
                 collection_exit,
                 request.round_id,
@@ -188,6 +188,14 @@ class WorkflowService:
         if record is None:
             if paths.zones_snapshot.exists() or paths.zones_snapshot.is_symlink():
                 return _state_failure(request.round_id, paths, "orphaned_zone_snapshot")
+            if not preserved_inputs_ready(paths):
+                return RoundOutcome(
+                    2,
+                    request.round_id,
+                    "preserved_inputs_missing",
+                    paths.source,
+                    paths.secret,
+                )
             try:
                 load_approved_zones(request.zones_path)
             except RuntimeConfigurationError:
@@ -199,14 +207,6 @@ class WorkflowService:
                     paths.secret,
                 )
             return self._process_round(request, managed_state=False)
-        if request.policy_override_requested:
-            return RoundOutcome(
-                2,
-                request.round_id,
-                "policy_override_rejected",
-                paths.source,
-                paths.secret,
-            )
         if record.state is RoundState.UNUSABLE:
             return RoundOutcome(
                 2,
@@ -220,6 +220,22 @@ class WorkflowService:
                 2,
                 request.round_id,
                 "incomplete_cleanup",
+                paths.source,
+                paths.secret,
+            )
+        if request.policy_override_requested:
+            return RoundOutcome(
+                2,
+                request.round_id,
+                "policy_override_rejected",
+                paths.source,
+                paths.secret,
+            )
+        if not preserved_inputs_ready(paths):
+            return RoundOutcome(
+                2,
+                request.round_id,
+                "preserved_inputs_missing",
                 paths.source,
                 paths.secret,
             )
@@ -490,6 +506,15 @@ def cleanup_empty_attempt(source_path: Path, secret_path: Path) -> bool:
         return True
     except OSError:
         return False
+
+
+def preserved_inputs_ready(paths: RoundPaths) -> bool:
+    return (
+        paths.source.is_file()
+        and not paths.source.is_symlink()
+        and paths.secret.is_file()
+        and not paths.secret.is_symlink()
+    )
 
 
 def ensure_private_directory(path: Path) -> None:

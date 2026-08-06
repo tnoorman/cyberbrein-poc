@@ -85,6 +85,12 @@ def test_resume_invokes_pipeline_without_collection(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _write_zones(tmp_path / "zones.geojson")
+    source = tmp_path / "data/smoke/resume-round.sqlite"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"preserved")
+    secret = tmp_path / "data/local/resume-round.secret"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("s" * 64, encoding="utf-8")
     commands: list[list[str]] = []
 
     def run_command(command: list[str], _environment: dict[str, str]) -> int:
@@ -254,6 +260,7 @@ def test_stored_uncleaned_round_cannot_resume_and_can_be_discarded(
     )
     assert service.run(_run_request(tmp_path)).exit_code == CLEANUP_EXIT
     assert RoundStateStore().load("service-round").state is RoundState.STORED_UNCLEANED
+    RoundPaths.for_round("service-round").source.unlink()
 
     outcome = service.resume(
         ResumeRequest(
@@ -274,3 +281,37 @@ def test_stored_uncleaned_round_cannot_resume_and_can_be_discarded(
     paths = RoundPaths.for_round("service-round")
     assert not paths.zones_snapshot.exists()
     assert not paths.state_record.exists()
+
+
+def test_active_round_with_missing_preserved_input_fails_before_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def interrupt_collection(command: list[str], _environment: dict[str, str]) -> int:
+        Path(command[command.index("--database-path") + 1]).write_bytes(b"captured")
+        return 2
+
+    service = WorkflowService(
+        command_runner=interrupt_collection,
+        gps_check=lambda _accuracy: True,
+        monitor_check=lambda _interface: True,
+    )
+    assert service.run(_run_request(tmp_path)).exit_code == 2
+    RoundPaths.for_round("service-round").secret.unlink()
+
+    outcome = service.resume(
+        ResumeRequest(
+            round_id="service-round",
+            zones_path=tmp_path / "zones.geojson",
+            max_gps_accuracy=15.0,
+            database_url="postgresql+psycopg2:///test",
+            no_dashboard=True,
+            address="127.0.0.1",
+            port=8501,
+        )
+    )
+
+    assert outcome.exit_code == 2
+    assert outcome.guidance == "preserved_inputs_missing"
