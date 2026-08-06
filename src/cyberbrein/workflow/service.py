@@ -1,12 +1,12 @@
 import os
 import secrets
-import sqlite3
 import stat
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from cyberbrein.collection.buffer import is_empty_source_buffer
 from cyberbrein.pipeline.exit_codes import CLEANUP_EXIT, UNUSABLE_SOURCE_EXIT
 from cyberbrein.pipeline.models import PipelineRuntimeError
 from cyberbrein.pipeline.runtime_inputs import cleanup_runtime_inputs
@@ -273,15 +273,12 @@ def cleanup_empty_attempt(source_path: Path, secret_path: Path) -> bool:
             return False
         if not source_path.is_file() or not secret_path.is_file():
             return False
-        if source_path.stat().st_size > 0:
-            with sqlite3.connect(f"file:{source_path.absolute()}?mode=ro", uri=True) as connection:
-                count = connection.execute("SELECT count(*) FROM raw_observation").fetchone()
-            if count is None or count[0] != 0:
-                return False
+        if is_empty_source_buffer(source_path) is not True:
+            return False
         source_path.unlink()
         secret_path.unlink()
         return True
-    except (OSError, sqlite3.Error):
+    except OSError:
         return False
 
 
