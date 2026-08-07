@@ -237,14 +237,17 @@ class _MapDrawing(Flowable):
         self.canv.setStrokeColor(colors.HexColor("#90a4ae"))
         self.canv.setFillColor(colors.HexColor("#fafafa"))
         self.canv.rect(0, 0, self.width, self.height, fill=1, stroke=1)
-        bounds = _map_bounds(self.data)
-        if bounds is None:
+        render_width = max(1, round(self.width * 2))
+        render_height = max(1, round(self.height * 2))
+        viewport = _map_viewport(self.data, render_width, render_height)
+        if viewport is None:
             return
+        bounds, _zoom = viewport
         basemap = _build_basemap_image(
             self.data,
             self.tile_fetcher,
-            width=max(1, round(self.width * 2)),
-            height=max(1, round(self.height * 2)),
+            width=render_width,
+            height=render_height,
         )
         if basemap is not None:
             image_buffer = BytesIO()
@@ -307,9 +310,42 @@ def _map_bounds(data: DashboardData) -> tuple[float, float, float, float] | None
         max_y = max(finding.latitude for finding in data.findings)
     else:
         return None
-    padding_x = max((max_x - min_x) * 0.05, 1e-6)
-    padding_y = max((max_y - min_y) * 0.05, 1e-6)
-    return min_x - padding_x, min_y - padding_y, max_x + padding_x, max_y + padding_y
+    # Leaflet's fitBounds uses the data bounds themselves. The integer tile zoom and
+    # the viewport aspect ratio provide the visible space around those bounds.
+    if min_x == max_x:
+        min_x -= 1e-6
+        max_x += 1e-6
+    if min_y == max_y:
+        min_y -= 1e-6
+        max_y += 1e-6
+    return min_x, min_y, max_x, max_y
+
+
+def _map_viewport(
+    data: DashboardData,
+    width: int,
+    height: int,
+) -> tuple[tuple[float, float, float, float], int] | None:
+    """Return the aspect-preserving viewport produced by a Leaflet-style fitBounds."""
+    bounds = _map_bounds(data)
+    if bounds is None:
+        return None
+    zoom = _tile_zoom(bounds, width, height)
+    world_size = TILE_SIZE * (2**zoom)
+    min_lon, min_lat, max_lon, max_lat = bounds
+    center_x = (_world_x(min_lon) + _world_x(max_lon)) / 2
+    center_y = (_world_y(max_lat) + _world_y(min_lat)) / 2
+    half_width = width / world_size / 2
+    half_height = height / world_size / 2
+    return (
+        (
+            _longitude_from_world_x(center_x - half_width),
+            _latitude_from_world_y(center_y + half_height),
+            _longitude_from_world_x(center_x + half_width),
+            _latitude_from_world_y(center_y - half_height),
+        ),
+        zoom,
+    )
 
 
 def _project(
@@ -337,11 +373,11 @@ def _build_basemap_image(
     width: int,
     height: int,
 ) -> Image.Image | None:
-    bounds = _map_bounds(data)
-    if bounds is None:
+    viewport = _map_viewport(data, width, height)
+    if viewport is None:
         return None
+    bounds, zoom = viewport
     min_lon, min_lat, max_lon, max_lat = bounds
-    zoom = _tile_zoom(bounds, width, height)
     world_size = TILE_SIZE * (2**zoom)
     left = _world_x(min_lon) * world_size
     right = _world_x(max_lon) * world_size
@@ -431,3 +467,11 @@ def _world_y(latitude: float) -> float:
     clipped = min(max(latitude, -85.05112878), 85.05112878)
     sine = math.sin(math.radians(clipped))
     return 0.5 - math.log((1 + sine) / (1 - sine)) / (4 * math.pi)
+
+
+def _longitude_from_world_x(world_x: float) -> float:
+    return world_x * 360.0 - 180.0
+
+
+def _latitude_from_world_y(world_y: float) -> float:
+    return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * world_y))))
