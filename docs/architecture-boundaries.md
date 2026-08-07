@@ -97,3 +97,26 @@ niet als succesvolle afronding worden behandeld.
 Deze regels gelden voor zowel directe als indirecte afhankelijkheden. Gegevensuitwisseling tussen
 subsystemen verloopt via expliciete contracten en niet via interne implementatiedetails van een
 ander subsysteem.
+
+## Runtime en Workflow
+
+Workflow is de applicatiecoördinatielaag boven Collection en Pipeline:
+
+- `workflow.cli` is de presentatie-adapter voor argumenten, privileges, omgevingsdefaults en
+  Nederlandstalige gebruikersmeldingen;
+- `WorkflowService` bepaalt de volgorde, subprocessgrenzen en herstelbeslissingen en bevat geen
+  argparse- of consolelogica;
+- Workflow gebruikt gepubliceerde Pipeline-exitcodes en cleanupcontracten en leest niet direct de
+  interne SQLite-tabellen van Collection;
+- Collection blijft eigenaar van inspectie van de ruwe bronbuffer;
+- actieve rondes zetten zones en maximale GPS-nauwkeurigheid vast in private runtimeartefacten;
+- lifecycletransities worden door `RoundStateStore` gecontroleerd; ontbrekende metadata is alleen
+  legacy wanneer zowel record als zonesnapshot ontbreken;
+- een corrupt record, een losse snapshot of een digestverschil leidt tot een gesloten fout en
+  nooit tot automatisch ruimer beleid;
+- alleen `PREPARED` en `COLLECTED` zijn hervatbaar. `UNUSABLE` en `STORED_UNCLEANED` vereisen
+  expliciet discard.
+
+Een toekomstige GUI is een tweede presentatie-adapter en mag deze regels niet dupliceren. Een
+progress-port, proceslocking of privilege-helper wordt pas toegevoegd wanneer die tweede actor
+daadwerkelijk wordt geïmplementeerd.

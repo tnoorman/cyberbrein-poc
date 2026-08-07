@@ -1,9 +1,6 @@
 import argparse
 import math
 import os
-import re
-import secrets
-import sqlite3
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -14,12 +11,19 @@ from dotenv import load_dotenv
 
 from cyberbrein.collection.gpsd_client import GpsdClient
 from cyberbrein.collection.monitor_setup import MonitorProvisioner, MonitorSetupError
-from cyberbrein.pipeline.cli import UNUSABLE_SOURCE_EXIT, cleanup_runtime_inputs
-from cyberbrein.pipeline.models import PipelineRuntimeError
+from cyberbrein.pipeline.exit_codes import (
+    CLEANUP_EXIT as CLEANUP_EXIT,
+)
+from cyberbrein.pipeline.exit_codes import (
+    UNUSABLE_SOURCE_EXIT as UNUSABLE_SOURCE_EXIT,
+)
 from cyberbrein.pipeline.runtime_config import RuntimeConfigurationError, load_approved_zones
 
+from .round_state import ROUND_ID_PATTERN as ROUND_ID_PATTERN
+from .round_state import RoundPaths
+from .service import ResumeRequest, RoundOutcome, RunRequest, WorkflowEvent, WorkflowService
+
 DEFAULT_DATABASE_URL = "postgresql+psycopg2:///cyberbrein_poc"
-ROUND_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,14 +95,14 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("round_id", help="Measurement round ID shown by the failed workflow.")
     resume.add_argument(
         "--zones",
-        default=os.environ.get("CYBERBREIN_ZONES", "data/local/zones.geojson"),
-        help="Approved GeoJSON zone file.",
+        default=None,
+        help="Approved GeoJSON zone file for a legacy preserved round.",
     )
     resume.add_argument(
         "--max-gps-accuracy",
         type=float,
-        default=os.environ.get("CYBERBREIN_MAX_GPS_ACCURACY", "15"),
-        help="Maximum accepted GPS accuracy in metres (default: 15).",
+        default=None,
+        help="Maximum GPS accuracy for a legacy preserved round.",
     )
     resume.add_argument(
         "--no-dashboard",
@@ -176,8 +180,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    service = WorkflowService(
+        command_runner=_run,
+        gps_check=_gps_quality_ready,
+        monitor_check=_monitor_interface_ready,
+        event_handler=_render_workflow_event,
+    )
     if args.command == "discard":
-        return _discard_round(parser, args.round_id, args.yes)
+        if ROUND_ID_PATTERN.fullmatch(args.round_id) is None:
+            parser.error(
+                "round ID may contain only letters, digits, dots, underscores, and hyphens"
+            )
+        if not args.yes:
+            parser.error("discard requires --yes because it permanently deletes raw inputs")
+        return _render_outcome(service.discard(args.round_id))
 
     database_url = os.environ.get("CYBERBREIN_DATABASE_URL", DEFAULT_DATABASE_URL)
     if not database_url.startswith(("postgresql://", "postgresql+psycopg2://")):
@@ -186,132 +202,50 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--port must be between 1 and 65535")
 
     if args.command == "dashboard":
-        return _start_dashboard(args.address, args.port, database_url)
+        return _render_outcome(service.dashboard(args.address, args.port, database_url))
 
     if args.command == "resume":
         _validate_processing_arguments(parser, args)
-        source_path, secret_path, zones_path = _runtime_paths(parser, args.round_id, args.zones)
-        if not source_path.is_file() or source_path.is_symlink():
-            parser.error(f"preserved source buffer not found: {source_path}")
-        if not secret_path.is_file() or secret_path.is_symlink():
-            parser.error(f"preserved secret not found: {secret_path}")
-        return _process_round(
-            round_id=args.round_id,
-            source_path=source_path,
-            secret_path=secret_path,
-            zones_path=zones_path,
-            max_gps_accuracy=args.max_gps_accuracy,
-            database_url=database_url,
-            no_dashboard=args.no_dashboard,
-            address=args.address,
-            port=args.port,
+        explicit_policy = args.zones is not None or args.max_gps_accuracy is not None
+        zones_path = Path(
+            args.zones or os.environ.get("CYBERBREIN_ZONES", "data/local/zones.geojson")
+        )
+        max_gps_accuracy = _legacy_resume_accuracy(parser, args.max_gps_accuracy)
+        return _render_outcome(
+            service.resume(
+                ResumeRequest(
+                    round_id=args.round_id,
+                    zones_path=zones_path,
+                    max_gps_accuracy=max_gps_accuracy,
+                    database_url=database_url,
+                    no_dashboard=args.no_dashboard,
+                    address=args.address,
+                    port=args.port,
+                    policy_override_requested=explicit_policy,
+                )
+            )
         )
 
     _validate_run_arguments(parser, args)
     round_id = args.round_id or _new_round_id()
-    source_path, secret_path, zones_path = _runtime_paths(parser, round_id, args.zones)
-    if args.interface_lifecycle == "persistent-monitor" and not _monitor_interface_ready(
-        args.interface
-    ):
-        return 2
-    if not _gps_quality_ready(args.max_gps_accuracy):
-        return 2
-
-    try:
-        _create_runtime_inputs(source_path, secret_path)
-    except OSError as error:
-        print(f"Workflow kon veilige runtimebestanden niet maken: {error}", file=sys.stderr)
-        return 2
-
-    environment = os.environ.copy()
-    environment["CYBERBREIN_DATABASE_URL"] = database_url
-    python = _python_executable()
-    collection_command = [
-        "sudo",
-        python,
-        "-m",
-        "cyberbrein.collection",
-        "--interface",
-        args.interface,
-        "--database-path",
-        str(source_path),
-        "--measurement-round-id",
-        round_id,
-        "--channels",
-        args.channels,
-        "--duration",
-        str(args.duration),
-        "--gpsd",
-        "--require-gps-fix",
-        "--max-gps-accuracy",
-        str(args.max_gps_accuracy),
-    ]
-    if args.interface_lifecycle == "persistent-monitor":
-        collection_command.append("--no-auto-monitor")
-    print(f"Meetronde gestart: {round_id}")
-    collection_exit = _run(collection_command, environment)
-    if collection_exit != 0:
-        if _cleanup_empty_attempt(source_path, secret_path):
-            print("Geen waarnemingen vastgelegd; lege runtimebestanden zijn verwijderd.")
-        else:
-            _print_recovery(source_path, secret_path)
-        return collection_exit
-
-    return _process_round(
-        round_id=round_id,
-        source_path=source_path,
-        secret_path=secret_path,
-        zones_path=zones_path,
-        max_gps_accuracy=args.max_gps_accuracy,
-        database_url=database_url,
-        no_dashboard=args.no_dashboard,
-        address=args.address,
-        port=args.port,
+    _, _, zones_path = _runtime_paths(parser, round_id, args.zones)
+    return _render_outcome(
+        service.run(
+            RunRequest(
+                round_id=round_id,
+                interface=args.interface,
+                interface_lifecycle=args.interface_lifecycle,
+                channels=args.channels,
+                duration=args.duration,
+                zones_path=zones_path,
+                max_gps_accuracy=args.max_gps_accuracy,
+                database_url=database_url,
+                no_dashboard=args.no_dashboard,
+                address=args.address,
+                port=args.port,
+            )
+        )
     )
-
-
-def _process_round(
-    *,
-    round_id: str,
-    source_path: Path,
-    secret_path: Path,
-    zones_path: Path,
-    max_gps_accuracy: float,
-    database_url: str,
-    no_dashboard: bool,
-    address: str,
-    port: int,
-) -> int:
-    environment = os.environ.copy()
-    environment["CYBERBREIN_DATABASE_URL"] = database_url
-    pipeline_command = [
-        _python_executable(),
-        "-m",
-        "cyberbrein.pipeline",
-        "--source-db",
-        str(source_path),
-        "--measurement-round-id",
-        round_id,
-        "--zones",
-        str(zones_path),
-        "--secret-file",
-        str(secret_path),
-        "--max-gps-accuracy",
-        str(max_gps_accuracy),
-        "--delete-source-on-success",
-    ]
-    pipeline_exit = _run(pipeline_command, environment)
-    if pipeline_exit != 0:
-        if pipeline_exit == UNUSABLE_SOURCE_EXIT:
-            _print_unusable(source_path, secret_path)
-        else:
-            _print_recovery(source_path, secret_path)
-        return pipeline_exit
-
-    print("Meetronde verwerkt en tijdelijke invoer veilig verwijderd.")
-    if no_dashboard:
-        return 0
-    return _start_dashboard(address, port, database_url)
 
 
 def _validate_run_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -329,7 +263,9 @@ def _validate_run_arguments(parser: argparse.ArgumentParser, args: argparse.Name
 def _validate_processing_arguments(
     parser: argparse.ArgumentParser, args: argparse.Namespace
 ) -> None:
-    if not math.isfinite(args.max_gps_accuracy) or args.max_gps_accuracy < 0:
+    if args.max_gps_accuracy is not None and (
+        not math.isfinite(args.max_gps_accuracy) or args.max_gps_accuracy < 0
+    ):
         parser.error("--max-gps-accuracy must not be negative")
     if args.round_id is not None and ROUND_ID_PATTERN.fullmatch(args.round_id) is None:
         parser.error("round ID may contain only letters, digits, dots, underscores, and hyphens")
@@ -338,8 +274,7 @@ def _validate_processing_arguments(
 def _runtime_paths(
     parser: argparse.ArgumentParser, round_id: str, zones: str
 ) -> tuple[Path, Path, Path]:
-    source_path = Path("data/smoke") / f"{round_id}.sqlite"
-    secret_path = Path("data/local") / f"{round_id}.secret"
+    paths = RoundPaths.for_round(round_id)
     zones_path = Path(zones)
     if not zones_path.is_file() or zones_path.is_symlink():
         parser.error(f"approved zone file not found: {zones_path}")
@@ -347,7 +282,22 @@ def _runtime_paths(
         load_approved_zones(zones_path)
     except RuntimeConfigurationError:
         parser.error(f"approved zone file is invalid: {zones_path}")
-    return source_path, secret_path, zones_path
+    return paths.source, paths.secret, zones_path
+
+
+def _legacy_resume_accuracy(
+    parser: argparse.ArgumentParser,
+    explicit_accuracy: float | None,
+) -> float:
+    if explicit_accuracy is not None:
+        return explicit_accuracy
+    try:
+        accuracy = float(os.environ.get("CYBERBREIN_MAX_GPS_ACCURACY", "15"))
+    except ValueError:
+        parser.error("CYBERBREIN_MAX_GPS_ACCURACY must be a number")
+    if not math.isfinite(accuracy) or accuracy < 0:
+        parser.error("--max-gps-accuracy must not be negative")
+    return accuracy
 
 
 def _new_round_id() -> str:
@@ -398,6 +348,65 @@ def _monitor_interface_ready(interface: str) -> bool:
     return False
 
 
+def _render_workflow_event(event: WorkflowEvent) -> None:
+    if event.name == "round_started":
+        print(f"Meetronde gestart: {event.round_id}")
+
+
+def _render_outcome(outcome: RoundOutcome) -> int:
+    if outcome.guidance == "runtime_creation_failed":
+        print(
+            f"Workflow kon veilige runtimebestanden niet maken: {outcome.detail}",
+            file=sys.stderr,
+        )
+    elif outcome.guidance == "empty_attempt":
+        print("Geen waarnemingen vastgelegd; lege runtimebestanden zijn verwijderd.")
+    elif outcome.guidance == "empty_cleanup_failed":
+        print(
+            "Geen waarnemingen vastgelegd, maar de lege runtimebundel kon niet volledig worden "
+            "verwijderd."
+        )
+        print(f"Resterende invoer verwijderen: ./cyberbrein discard {outcome.round_id} --yes")
+    elif outcome.guidance == "recovery":
+        assert outcome.source_path is not None and outcome.secret_path is not None
+        _print_recovery(outcome.source_path, outcome.secret_path)
+    elif outcome.guidance == "unusable":
+        assert outcome.source_path is not None and outcome.secret_path is not None
+        _print_unusable(outcome.source_path, outcome.secret_path)
+    elif outcome.guidance == "incomplete_cleanup":
+        assert outcome.source_path is not None and outcome.secret_path is not None
+        _print_incomplete_cleanup(outcome.source_path, outcome.secret_path)
+    elif outcome.guidance in {"invalid_round_state", "round_state_failed"}:
+        print(
+            f"Meetronde kan niet veilig worden hervat: {outcome.detail or 'invalid_round_state'}.",
+            file=sys.stderr,
+        )
+        print(f"Controleer of verwijder de ronde: ./cyberbrein discard {outcome.round_id} --yes")
+    elif outcome.guidance == "policy_override_rejected":
+        print(
+            "Deze meetronde heeft een vastgezet zone- en GPS-beleid; overrides bij resume zijn "
+            "niet toegestaan.",
+            file=sys.stderr,
+        )
+    elif outcome.guidance == "legacy_policy_invalid":
+        print("Het zonebeleid voor deze oudere meetronde is ongeldig.", file=sys.stderr)
+    elif outcome.guidance == "preserved_inputs_missing":
+        print(
+            "De bewaarde bronbuffer of het bijbehorende secret ontbreekt of is onveilig.",
+            file=sys.stderr,
+        )
+    elif outcome.guidance == "processed":
+        print("Meetronde verwerkt en tijdelijke invoer veilig verwijderd.")
+    elif outcome.guidance == "discard_failed":
+        print(
+            "Verwijderen mislukt: ongeldige of ontbrekende runtimebestanden.",
+            file=sys.stderr,
+        )
+    elif outcome.guidance == "discarded":
+        print(f"Ruwe invoer verwijderd voor meetronde: {outcome.round_id}")
+    return outcome.exit_code
+
+
 def _configure_monitor_interface(args: argparse.Namespace, *, setup: bool) -> int:
     try:
         provisioner = MonitorProvisioner(
@@ -416,44 +425,6 @@ def _configure_monitor_interface(args: argparse.Namespace, *, setup: bool) -> in
     return 0
 
 
-def _create_runtime_inputs(source_path: Path, secret_path: Path) -> None:
-    source_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    secret_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if source_path.exists() or secret_path.exists():
-        raise FileExistsError("runtimebestanden voor deze meetronde bestaan al")
-
-    source_descriptor = os.open(source_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    os.close(source_descriptor)
-    try:
-        secret_descriptor = os.open(secret_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(secret_descriptor, "w", encoding="utf-8") as stream:
-            stream.write(secrets.token_hex(32))
-            stream.write("\n")
-    except BaseException:
-        source_path.unlink(missing_ok=True)
-        secret_path.unlink(missing_ok=True)
-        raise
-
-
-def _cleanup_empty_attempt(source_path: Path, secret_path: Path) -> bool:
-    """Remove launcher-owned inputs only when the buffer contains no observations."""
-    try:
-        if source_path.is_symlink() or secret_path.is_symlink():
-            return False
-        if not source_path.is_file() or not secret_path.is_file():
-            return False
-        if source_path.stat().st_size > 0:
-            with sqlite3.connect(f"file:{source_path.absolute()}?mode=ro", uri=True) as connection:
-                count = connection.execute("SELECT count(*) FROM raw_observation").fetchone()
-            if count is None or count[0] != 0:
-                return False
-        source_path.unlink()
-        secret_path.unlink()
-        return True
-    except (OSError, sqlite3.Error):
-        return False
-
-
 def _run(command: Sequence[str], environment: dict[str, str]) -> int:
     try:
         return subprocess.run(command, check=False, env=environment).returncode
@@ -463,30 +434,6 @@ def _run(command: Sequence[str], environment: dict[str, str]) -> int:
     except FileNotFoundError:
         print(f"Benodigd programma niet gevonden: {command[0]}", file=sys.stderr)
         return 127
-
-
-def _python_executable() -> str:
-    """Keep the virtualenv path; resolving its symlink would bypass the environment."""
-    return str(Path(sys.executable).absolute())
-
-
-def _start_dashboard(address: str, port: int, database_url: str) -> int:
-    environment = os.environ.copy()
-    environment["CYBERBREIN_DATABASE_URL"] = database_url
-    command = [
-        _python_executable(),
-        "-m",
-        "streamlit",
-        "run",
-        "src/cyberbrein/presentation/app.py",
-        "--server.address",
-        address,
-        "--server.port",
-        str(port),
-        "--server.headless",
-        "true",
-    ]
-    return _run(command, environment)
 
 
 def _print_recovery(source_path: Path, secret_path: Path) -> None:
@@ -503,21 +450,19 @@ def _print_unusable(source_path: Path, secret_path: Path) -> None:
     print(f"Verwijderen: ./cyberbrein discard {source_path.stem} --yes")
 
 
-def _discard_round(parser: argparse.ArgumentParser, round_id: str, confirmed: bool) -> int:
-    if ROUND_ID_PATTERN.fullmatch(round_id) is None:
-        parser.error("round ID may contain only letters, digits, dots, underscores, and hyphens")
-    if not confirmed:
-        parser.error("discard requires --yes because it permanently deletes raw inputs")
-    source_path = Path("data/smoke") / f"{round_id}.sqlite"
-    secret_path = Path("data/local") / f"{round_id}.secret"
-    try:
-        cleanup_runtime_inputs(source_path, secret_path)
-    except PipelineRuntimeError:
-        print("Verwijderen mislukt: ongeldige of ontbrekende runtimebestanden.", file=sys.stderr)
-        return 2
-    print(f"Ruwe invoer verwijderd voor meetronde: {round_id}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+def _print_incomplete_cleanup(source_path: Path, secret_path: Path) -> None:
+    print(
+        "Meetronde opgeslagen en geverifieerd, maar tijdelijke invoer is niet volledig verwijderd."
+    )
+    paths = RoundPaths.for_round(source_path.stem)
+    for label, path in (
+        ("Bronbuffer", source_path),
+        ("Secret", secret_path),
+        ("Zonesnapshot", paths.zones_snapshot),
+        ("Lifecycle-record", paths.state_record),
+    ):
+        if path.exists() or path.is_symlink():
+            print(f"{label}: {path}")
+    print("Verwerking mag niet opnieuw worden uitgevoerd.")
+    print("Resultaten bekijken: ./cyberbrein dashboard")
+    print(f"Resterende invoer verwijderen: ./cyberbrein discard {source_path.stem} --yes")

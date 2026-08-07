@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from cyberbrein import workflow
+from cyberbrein.workflow import cli as workflow
 
 
 def _write_zone_file(path: Path) -> None:
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         """{
             "type": "FeatureCollection",
@@ -36,6 +36,7 @@ def test_run_sequences_collection_pipeline_and_dashboard(
     monkeypatch.setattr(workflow, "_monitor_interface_ready", lambda interface: True)
     commands: list[list[str]] = []
     modes: list[tuple[int, int]] = []
+    directory_modes: list[tuple[int, int]] = []
 
     def fake_run(command: list[str], **_: object) -> subprocess_result:
         commands.append(command)
@@ -43,6 +44,9 @@ def test_run_sequences_collection_pipeline_and_dashboard(
             source = tmp_path / "data/smoke/test-round.sqlite"
             secret = tmp_path / "data/local/test-round.secret"
             modes.append((source.stat().st_mode & 0o777, secret.stat().st_mode & 0o777))
+            directory_modes.append(
+                (source.parent.stat().st_mode & 0o777, secret.parent.stat().st_mode & 0o777)
+            )
         return subprocess_result(0)
 
     monkeypatch.setattr(workflow.subprocess, "run", fake_run)
@@ -57,6 +61,30 @@ def test_run_sequences_collection_pipeline_and_dashboard(
     assert "--delete-source-on-success" in commands[1]
     assert commands[2][2:4] == ["streamlit", "run"]
     assert modes == [(0o600, 0o600)]
+    assert directory_modes == [(0o700, 0o700)]
+    assert commands[1][commands[1].index("--zones") + 1] == "data/local/test-round.zones.geojson"
+    assert not (tmp_path / "data/local/test-round.zones.geojson").exists()
+    assert not (tmp_path / "data/local/test-round.round.json").exists()
+
+
+def test_runtime_directory_symlink_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    real_local = tmp_path / "real-local"
+    real_local.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "local").symlink_to(real_local, target_is_directory=True)
+    _write_zone_file(real_local / "zones.geojson")
+    monkeypatch.setenv("CYBERBREIN_INTERFACE", "wlan-test")
+    monkeypatch.setattr(workflow, "_gps_quality_ready", lambda max_accuracy: True)
+    monkeypatch.setattr(workflow, "_monitor_interface_ready", lambda interface: True)
+
+    assert workflow.main(["run", "--round-id", "unsafe-directory"]) == 2
+    assert not (tmp_path / "data/smoke/unsafe-directory.sqlite").exists()
+    assert not (real_local / "unsafe-directory.secret").exists()
 
 
 def test_collection_failure_removes_empty_runtime_inputs(
@@ -77,6 +105,8 @@ def test_collection_failure_removes_empty_runtime_inputs(
     assert workflow.main(["run", "--round-id", "failed-round"]) == 2
     assert not (tmp_path / "data/smoke/failed-round.sqlite").exists()
     assert not (tmp_path / "data/local/failed-round.secret").exists()
+    assert not (tmp_path / "data/local/failed-round.zones.geojson").exists()
+    assert not (tmp_path / "data/local/failed-round.round.json").exists()
 
 
 def test_collection_failure_keeps_nonempty_buffer_for_recovery(
@@ -100,6 +130,8 @@ def test_collection_failure_keeps_nonempty_buffer_for_recovery(
     assert workflow.main(["run", "--round-id", "recoverable-round"]) == 2
     assert (tmp_path / "data/smoke/recoverable-round.sqlite").exists()
     assert (tmp_path / "data/local/recoverable-round.secret").exists()
+    assert (tmp_path / "data/local/recoverable-round.zones.geojson").exists()
+    assert (tmp_path / "data/local/recoverable-round.round.json").exists()
 
 
 def test_invalid_zone_file_stops_before_runtime_inputs_are_created(
@@ -208,6 +240,57 @@ def test_unusable_buffer_is_not_presented_as_recoverable(
     assert "resume unusable-round" not in output
 
 
+def test_verified_storage_with_incomplete_cleanup_is_not_reprocessed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_zone_file(tmp_path / "data/local/zones.geojson")
+    source = tmp_path / "data/smoke/stored-round.sqlite"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"preserved")
+    source.chmod(0o600)
+    secret = tmp_path / "data/local/stored-round.secret"
+    secret.write_text("s" * 64, encoding="utf-8")
+    secret.chmod(0o600)
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess_result(workflow.CLEANUP_EXIT),
+    )
+
+    assert workflow.main(["resume", "stored-round", "--no-dashboard"]) == 4
+
+    output = capsys.readouterr().out
+    assert "opgeslagen en geverifieerd" in output
+    assert "dashboard" in output
+    assert "discard stored-round --yes" in output
+    assert "resume stored-round" not in output
+
+
+@pytest.mark.parametrize("missing", ("source", "secret"))
+def test_discard_finishes_partial_cleanup(
+    missing: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "data/smoke/partial-round.sqlite"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"raw")
+    source.chmod(0o600)
+    secret = tmp_path / "data/local/partial-round.secret"
+    secret.parent.mkdir(parents=True)
+    secret.write_text("s" * 64, encoding="utf-8")
+    secret.chmod(0o600)
+    (source if missing == "source" else secret).unlink()
+
+    assert workflow.main(["discard", "partial-round", "--yes"]) == 0
+    assert not source.exists()
+    assert not secret.exists()
+
+
 def test_discard_deletes_explicitly_confirmed_runtime_inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -252,6 +335,73 @@ def test_root_invocation_is_rejected_before_starting_subprocess(
     )
 
     assert workflow.main(["dashboard"]) == 2
+
+
+@pytest.mark.parametrize(
+    "round_id",
+    (
+        "../escape",
+        "nested/round",
+        "round with spaces",
+        "a" * 129,
+    ),
+)
+def test_unsafe_round_id_is_rejected_before_runtime_inputs(
+    round_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_zone_file(tmp_path / "data/local/zones.geojson")
+    monkeypatch.setenv("CYBERBREIN_INTERFACE", "wlan-test")
+
+    with pytest.raises(SystemExit, match="2"):
+        workflow.main(["run", "--round-id", round_id])
+
+    assert not (tmp_path / "data/smoke").exists()
+
+
+def test_missing_program_returns_127(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError),
+    )
+
+    assert workflow._run(["missing-program"], {}) == 127
+    assert "Benodigd programma niet gevonden" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("port", ("0", "65536"))
+def test_dashboard_rejects_invalid_port_before_starting_subprocess(
+    port: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("subprocess must not start"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        workflow.main(["dashboard", "--port", port])
+
+
+def test_dashboard_rejects_non_postgresql_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CYBERBREIN_DATABASE_URL", "sqlite:///unsafe.db")
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("subprocess must not start"),
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        workflow.main(["dashboard"])
 
 
 def test_persistent_monitor_preflight_stops_before_runtime_inputs(

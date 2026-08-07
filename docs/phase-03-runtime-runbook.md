@@ -29,13 +29,23 @@ het sudo-wachtwoord; Pipeline en het dashboard draaien daarna weer als de normal
 monitor mode staat, voordat runtimebestanden worden gemaakt. Daardoor wordt configuratiedrift niet
 stilzwijgend tijdens een meetronde hersteld.
 
-De launcher maakt zelf een UTC-meetronde-ID en cryptografisch mode-600-secret. Alleen Collection
-draait via `sudo`; Pipeline en Streamlit blijven onder de normale gebruiker draaien. Na
-geverifieerde opslag verwijdert Pipeline de bronbuffer en het secret voordat het dashboard start.
-Bij een fout vóór de eerste waarneming verwijdert de launcher de lege buffer en het ongebruikte
-secret automatisch. Als Collection wel gegevens heeft opgeslagen, blijven beide bestanden staan
-en kan Pipeline worden hervat met het getoonde
-`./cyberbrein resume <meetronde-id>`-commando.
+De launcher maakt zelf een UTC-meetronde-ID, cryptografisch mode-600-secret, mode-600-snapshot van
+de gevalideerde zones en een klein mode-600-lifecycle-record. Alleen Collection draait via `sudo`;
+Pipeline en Streamlit blijven onder de normale gebruiker draaien. De snapshot en het record
+bevatten geen waarnemingen, BSSID, SSID, secret of netwerk-ID. Ze zetten voor een actieve ronde wel
+exact de zonebytes en de gekozen maximale GPS-nauwkeurigheid vast.
+
+Na geverifieerde opslag verwijdert Pipeline de bronbuffer en het secret; de launcher verwijdert
+daarna de zonesnapshot en het lifecycle-record voordat het dashboard start. Bij een fout vóór de
+eerste waarneming verwijdert de launcher de volledige ongebruikte runtimebundel automatisch. Als
+Collection wel gegevens heeft opgeslagen, blijft de bundel staan en kan Pipeline worden hervat
+met het getoonde `./cyberbrein resume <meetronde-id>`-commando.
+
+Voor rondes met lifecyclemetadata gebruikt `resume` altijd het vastgezette beleid. Latere
+wijzigingen aan `.env` of het oorspronkelijke zonebestand hebben geen invloed; expliciete
+`--zones`- of `--max-gps-accuracy`-overrides worden geweigerd. Dit voorkomt dat dezelfde ruwe
+waarnemingen onder een ruimer of anders afgebakend beleid worden verwerkt. Een oudere bewaarde
+ronde zonder record en snapshot blijft hervatbaar met het oude flag-/omgevingsgedrag.
 
 Vóór Collection controleert de launcher dat GPSD een 3D-fix mét horizontale nauwkeurigheid binnen
 `CYBERBREIN_MAX_GPS_ACCURACY` levert. Pipeline weigert een meetronde zonder bruikbare vondsten en
@@ -53,7 +63,7 @@ De losse stappen hieronder blijven beschikbaar voor diagnose en gecontroleerd he
 ## Lokale invoer voorbereiden
 
 Runtimebestanden staan onder `data/local`, `data/smoke` en `data/processed` en worden niet
-gecommit.
+gecommit. De launcher dwingt voor `data/local` en `data/smoke` mode `700` af.
 
 ```bash
 mkdir -p data/local data/smoke
@@ -189,7 +199,9 @@ Verwacht een verwijderde bronbuffer en secret, drie scorefactoren per netwerkvon
 - Bij exitcode `2` of `3` worden bronbuffer en secret niet verwijderd.
 - Bij exitcode `5` blijven bronbuffer en secret staan. Controleer de meetronde-ID en verwijder ze
   daarna expliciet met `./cyberbrein discard <meetronde-id> --yes`.
-- Bij exitcode `4` moet expliciet worden vastgesteld welke invoer nog bestaat; meld de run niet
-  als volledig afgerond.
+- Bij exitcode `4` is Storage geverifieerd, maar is cleanup onvolledig. Voer de verwerking niet
+  opnieuw uit. Bekijk de opgeslagen resultaten met `./cyberbrein dashboard`, controleer de door de
+  launcher genoemde resterende paden en verwijder de tijdelijke invoer daarna met
+  `./cyberbrein discard <meetronde-id> --yes`.
 - SQLite-sidecars `-journal`, `-wal` en `-shm` worden, indien aanwezig, samen met de bronbuffer
   verwijderd.
