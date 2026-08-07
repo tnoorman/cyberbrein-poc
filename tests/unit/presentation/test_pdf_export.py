@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from time import monotonic
 
+import pytest
 from PIL import Image
 from pypdf import PdfReader
 from shapely.geometry import Polygon
@@ -15,7 +16,14 @@ from cyberbrein.presentation.models import (
     MeasurementRoundSummary,
     ZoneView,
 )
-from cyberbrein.presentation.pdf_export import _build_basemap_image, generate_pdf
+from cyberbrein.presentation.pdf_export import (
+    _build_basemap_image,
+    _map_bounds,
+    _map_viewport,
+    _world_x,
+    _world_y,
+    generate_pdf,
+)
 
 
 def no_tiles(_url: str) -> None:
@@ -132,6 +140,40 @@ def test_pdf_basemap_stitches_label_free_road_tiles() -> None:
     assert image.size == (600, 320)
     assert requested_urls
     assert all("light_nolabels" in url for url in requested_urls)
+
+
+def test_pdf_map_viewport_preserves_mercator_aspect_ratio_and_fits_data() -> None:
+    data = _dashboard()
+    data_bounds = _map_bounds(data)
+    viewport = _map_viewport(data, width=600, height=320)
+
+    assert data_bounds is not None
+    assert viewport is not None
+    viewport_bounds, _zoom = viewport
+    data_min_lon, data_min_lat, data_max_lon, data_max_lat = data_bounds
+    min_lon, min_lat, max_lon, max_lat = viewport_bounds
+    projected_width = _world_x(max_lon) - _world_x(min_lon)
+    projected_height = _world_y(min_lat) - _world_y(max_lat)
+
+    assert projected_width / projected_height == pytest.approx(600 / 320)
+    assert min_lon <= data_min_lon <= data_max_lon <= max_lon
+    assert min_lat <= data_min_lat <= data_max_lat <= max_lat
+
+
+def test_pdf_map_viewport_includes_integer_zoom_breathing_room() -> None:
+    data_bounds = _map_bounds(_dashboard())
+    viewport = _map_viewport(_dashboard(), width=600, height=320)
+
+    assert data_bounds is not None
+    assert viewport is not None
+    viewport_bounds, _zoom = viewport
+    data_width = _world_x(data_bounds[2]) - _world_x(data_bounds[0])
+    data_height = _world_y(data_bounds[1]) - _world_y(data_bounds[3])
+    viewport_width = _world_x(viewport_bounds[2]) - _world_x(viewport_bounds[0])
+    viewport_height = _world_y(viewport_bounds[1]) - _world_y(viewport_bounds[3])
+
+    assert viewport_width > data_width
+    assert viewport_height > data_height
 
 
 def test_pdf_basemap_falls_back_when_tiles_are_unavailable() -> None:
