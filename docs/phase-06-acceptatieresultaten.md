@@ -10,7 +10,7 @@
   metadata; de oude dictionary- en dataframeweergave zijn niet aanwezig.
 - De PDF-actie opent een preview en biedt de downloadknop aan.
 - Kaart-, PDF-, privacy-, Operations- en PostGIS-tests blijven onderdeel van de volledige suite.
-- Ruff-format en Ruff-lint zijn groen; alle 202 tests slagen.
+- Ruff-format en Ruff-lint zijn groen; de toen actuele volledige suite slaagde.
 
 ## Lokale runtime-rooktest
 
