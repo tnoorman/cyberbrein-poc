@@ -144,7 +144,7 @@ De pipeline vereist dat de ruwe buffer rechten `600` heeft. Gebruik voor de defi
 cleanupvlag; zonder deze vlag blijven bronbuffer en secret beschikbaar voor herstel.
 
 ```bash
-sudo -n /home/cyberbrein/poc/.venv/bin/python \
+/home/cyberbrein/poc/.venv/bin/python \
   -m cyberbrein.pipeline \
   --source-db "$SOURCE_DB" \
   --measurement-round-id "$ROUND_ID" \

@@ -66,12 +66,24 @@ Storage ontvangt uitsluitend verwerkte resultaten van Processing.
 
 Presentation:
 
-- leest alleen uit Storage;
+- leest dashboardgegevens uitsluitend via de alleen-lezen `PresentationRepository`;
+- roept voor definitieve verwijdering de Operations-service aan; alleen Operations gebruikt
+  daarvoor de schrijvende Storage-repository;
 - presenteert een marker niet als bewezen locatie van een access point;
 - toont geen ruwe BSSID of SSID.
 
 De presentatie maakt duidelijk dat een marker een meet- of aggregatieresultaat weergeeft en geen
 bewijs van de fysieke locatie van een netwerkapparaat.
+
+De labelloze kaart gebruikt CARTO-tegels. De tegelprovider ontvangt daardoor de opgevraagde
+kaartuitsnede en het IP-adres van de dashboardserver, maar geen netwerk-ID's, scores of
+waarnemingsmetadata.
+
+## Afbakening radiospectrum
+
+Collection kan een 6GHz-band herkennen, maar Ingestion accepteert voor deze PoC uitsluitend
+2,4GHz en 5GHz. De normale launcherconfiguratie meet standaard de 5GHz-kanalen 36, 40, 44 en 48;
+andere afgesproken kanalen moeten expliciet worden geconfigureerd.
 
 ## Operations
 

@@ -12,6 +12,7 @@ class EncryptionCategory(StrEnum):
     OPEN = "OPEN"
     OUTDATED = "OUTDATED"
     WPA2 = "WPA2"
+    WPA2_OR_WPA3 = "WPA2_OR_WPA3"
     WPA3 = "WPA3"
     ENTERPRISE = "ENTERPRISE"
     UNKNOWN = "UNKNOWN"

@@ -8,6 +8,7 @@ _ENCRYPTION_STRENGTH = {
     EncryptionCategory.UNKNOWN: 1,
     EncryptionCategory.OUTDATED: 2,
     EncryptionCategory.WPA2: 3,
+    EncryptionCategory.WPA2_OR_WPA3: 3,
     EncryptionCategory.ENTERPRISE: 4,
     EncryptionCategory.WPA3: 5,
 }

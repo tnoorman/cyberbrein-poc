@@ -64,15 +64,15 @@ def _get_band(channel: int, frequency: int | None) -> str | None:
     return None
 
 
-def _get_network_stats(packet: Packet) -> dict[str, Any]:
+def _get_network_stats(packet: Packet) -> dict[str, Any] | None:
     try:
         if packet.haslayer(Dot11Beacon):
             return dict(packet[Dot11Beacon].network_stats())
         if packet.haslayer(Dot11ProbeResp):
             return dict(packet[Dot11ProbeResp].network_stats())
     except Exception:
-        return {}
-    return {}
+        return None
+    return None
 
 
 def _has_information_element(packet: Packet, element_id: int, prefix: bytes = b"") -> bool:
@@ -84,6 +84,8 @@ def _has_information_element(packet: Packet, element_id: int, prefix: bytes = b"
 
 def _get_encryption(packet: Packet) -> str:
     stats = _get_network_stats(packet)
+    if not stats:
+        return "UNKNOWN"
     crypto = stats.get("crypto")
     if crypto:
         crypto_text = ",".join(sorted(str(item) for item in crypto))

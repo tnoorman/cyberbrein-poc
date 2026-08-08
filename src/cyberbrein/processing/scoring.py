@@ -8,6 +8,7 @@ from cyberbrein.processing.models import (
 
 _ENCRYPTION_CONTRIBUTION = {
     EncryptionCategory.WPA3: 0,
+    EncryptionCategory.WPA2_OR_WPA3: 0,
     EncryptionCategory.WPA2: 0,
     EncryptionCategory.ENTERPRISE: 0,
     EncryptionCategory.OUTDATED: 1,

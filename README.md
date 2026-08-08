@@ -54,4 +54,5 @@ resterende tijdelijke invoer; opnieuw verwerken is dan niet toegestaan.
 Zie [`docs/phase-03-runtime-runbook.md`](docs/phase-03-runtime-runbook.md) voor configuratie,
 veilig herstel en de afzonderlijke onderliggende commando's. Zie
 [`docs/phase-04-presentation-runbook.md`](docs/phase-04-presentation-runbook.md) voor gebruik,
-PDF-export en veilige controles.
+PDF-export en veilige controles. De actuele technische afrondingscontrole staat in
+[`docs/phase-07-defence-readiness-acceptatieresultaten.md`](docs/phase-07-defence-readiness-acceptatieresultaten.md).

@@ -63,6 +63,7 @@ def test_maximum_score_is_sum_of_three_report_factors() -> None:
     ("encryption", "contribution"),
     [
         (EncryptionCategory.WPA3, 0),
+        (EncryptionCategory.WPA2_OR_WPA3, 0),
         (EncryptionCategory.WPA2, 0),
         (EncryptionCategory.ENTERPRISE, 0),
         (EncryptionCategory.OUTDATED, 1),

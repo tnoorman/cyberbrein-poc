@@ -12,7 +12,7 @@
 - Het activiteitenlog krijgt rechten `600` en bevat geen meetronde-ID of fouttekst.
 - De Streamlit-test bevestigt dat expliciete toestemming verplicht is, de verwijdering daarna wordt
   uitgevoerd en de lege-datamelding verschijnt.
-- Ruff-format en Ruff-lint zijn groen; de actuele volledige suite van 202 tests slaagt.
+- Ruff-format en Ruff-lint zijn groen; de toen actuele volledige suite slaagde.
 
 ## Privacy- en opslaggrenzen
 
