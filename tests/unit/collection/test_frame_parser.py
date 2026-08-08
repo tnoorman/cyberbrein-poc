@@ -151,3 +151,28 @@ def test_encryption_is_recognized(packet: Packet, expected_encryption: str) -> N
 
     assert metadata is not None
     assert metadata.encryption == expected_encryption
+
+
+def test_unreadable_network_stats_are_not_classified_as_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unreadable_stats(_self: Dot11Beacon) -> dict[str, object]:
+        raise ValueError("synthetic parser failure")
+
+    monkeypatch.setattr(Dot11Beacon, "network_stats", unreadable_stats)
+
+    metadata = parse_wifi_frame(_beacon_frame(), OBSERVED_AT_UTC)
+
+    assert metadata is not None
+    assert metadata.encryption == "UNKNOWN"
+
+
+def test_empty_network_stats_are_not_classified_as_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Dot11Beacon, "network_stats", lambda _self: {})
+
+    metadata = parse_wifi_frame(_beacon_frame(), OBSERVED_AT_UTC)
+
+    assert metadata is not None
+    assert metadata.encryption == "UNKNOWN"

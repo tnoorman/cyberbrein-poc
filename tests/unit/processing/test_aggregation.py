@@ -71,6 +71,17 @@ def test_weakest_encryption_is_retained_conservatively() -> None:
     assert finding.encryption is EncryptionCategory.OUTDATED
 
 
+def test_ambiguous_rsn_is_not_promoted_to_wpa3_during_aggregation() -> None:
+    finding = aggregate_network_findings(
+        [
+            _zoned(_observation(), encryption=EncryptionCategory.WPA3),
+            _zoned(_observation(), encryption=EncryptionCategory.WPA2_OR_WPA3),
+        ]
+    )[0]
+
+    assert finding.encryption is EncryptionCategory.WPA2_OR_WPA3
+
+
 def test_equal_signal_uses_earliest_observation_independent_of_input_order() -> None:
     early = _observation(latitude=1.0)
     late = _observation(observed_at_utc=OBSERVED_AT + timedelta(seconds=1), latitude=2.0)

@@ -6,6 +6,8 @@ def normalize_encryption(value: str) -> EncryptionCategory:
     normalized = value.strip().upper() if isinstance(value, str) else ""
     if "802.1X" in normalized or "ENTERPRISE" in normalized or "EAP" in normalized:
         return EncryptionCategory.ENTERPRISE
+    if "WPA2_OR_WPA3" in normalized or ("WPA2" in normalized and "WPA3" in normalized):
+        return EncryptionCategory.WPA2_OR_WPA3
     if "WPA3" in normalized:
         return EncryptionCategory.WPA3
     if "WPA2" in normalized or "RSN" in normalized:
