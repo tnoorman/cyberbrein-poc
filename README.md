@@ -36,7 +36,10 @@ met `sudo ./cyberbrein teardown-monitor --interface wlan1`.
 
 Dit maakt automatisch een meetronde-ID en mode-600-secret, voert Collection en Pipeline uit,
 verwijdert de tijdelijke buffer en het secret uitsluitend na geverifieerde opslag, en start daarna
-het lokale dashboard. Alleen het dashboard opnieuw starten kan met `./cyberbrein dashboard`.
+het lokale dashboard. Vóór Collection controleert `run` of Storage nog een verwerkte meetronde
+bevat. In dat geval stopt de workflow zonder nieuwe runtimebestanden of meting; verwijder de oude
+ronde pas na inzichtverstrekking via `./cyberbrein dashboard`. Alleen het dashboard opnieuw starten
+kan met `./cyberbrein dashboard`.
 Gebruik `./cyberbrein run --no-dashboard` wanneer alleen verzamelen en verwerken gewenst is.
 Na een onderbreking kan een door de launcher bewaarde meetronde worden hervat met het getoonde
 `./cyberbrein resume <meetronde-id>`-commando. Een geldige maar onbruikbare buffer wordt niet als

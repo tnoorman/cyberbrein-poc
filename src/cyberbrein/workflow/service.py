@@ -19,6 +19,7 @@ from .round_state import RoundPaths, RoundRecord, RoundState, RoundStateError, R
 CommandRunner = Callable[[Sequence[str], dict[str, str]], int]
 GpsCheck = Callable[[float], bool]
 MonitorCheck = Callable[[str], bool]
+RetainedRoundCheck = Callable[[str], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,7 @@ class WorkflowService:
         command_runner: CommandRunner,
         gps_check: GpsCheck,
         monitor_check: MonitorCheck,
+        retained_round_check: RetainedRoundCheck,
         event_handler: EventHandler | None = None,
         state_store: RoundStateStore | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -80,12 +82,18 @@ class WorkflowService:
         self._command_runner = command_runner
         self._gps_check = gps_check
         self._monitor_check = monitor_check
+        self._retained_round_check = retained_round_check
         self._event_handler = event_handler or (lambda _event: None)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._state_store = state_store or RoundStateStore(self._clock)
 
     def run(self, request: RunRequest) -> RoundOutcome:
         paths = RoundPaths.for_round(request.round_id)
+        try:
+            if self._retained_round_check(request.database_url):
+                return RoundOutcome(2, request.round_id, "retained_round_exists")
+        except Exception:
+            return RoundOutcome(2, request.round_id, "storage_preflight_failed")
         if request.interface_lifecycle == "persistent-monitor" and not self._monitor_check(
             request.interface
         ):

@@ -38,7 +38,7 @@ uitgewerkt. De controle introduceert geen nieuwe architectuurlaag of productiefu
 - `pip check` rapporteert geen gebroken requirements in de lokale projectomgeving.
 - Ruff-lint en Ruff-format slagen voor `src` en `tests`.
 - De volledige lokale suite tegen PostgreSQL/PostGIS en met Scapy-interface-initialisatie bevat
-  280 tests en slaagt volledig.
+  286 tests en slaagt volledig.
 
 ## PDF-kaart
 
@@ -52,3 +52,12 @@ Voor definitief bewijs van NFR-03 blijft een nieuwe buitenmeting nodig met
 `gps_accuracy_m <= 15`. Tijdens die meetronde worden dashboard en PDF nog één keer visueel naast
 elkaar gecontroleerd en worden filters, detailweergave, export en geverifieerde verwijdering
 doorlopen. Dit is praktijkvalidatie en geen open architectuur- of codewijziging.
+
+## Storage-preflight na praktijkbevinding
+
+Een praktijkrun liet zien dat een nog niet verwijderde meetronde pas tijdens Pipeline als generieke
+`storage_failed` zichtbaar werd. De launcher controleert daarom voortaan read-only vóór monitor,
+GPS, runtimecreatie en Collection of Storage al een verwerkte ronde bevat. Een bestaande ronde
+geeft veilige dashboardinstructies en wordt nooit automatisch verwijderd. Een onbereikbare Storage
+faalt eveneens gesloten. De Pipeline houdt daarnaast de specifieke veilige categorie
+`active_measurement_round_exists` voor een eventuele race-condition na de preflight.

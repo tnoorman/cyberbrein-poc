@@ -136,7 +136,10 @@ export CYBERBREIN_DATABASE_URL="postgresql+psycopg2:///cyberbrein_poc"
 ```
 
 De database bevat maximaal één nog niet verwijderde meetronde. Eén meetronde mag meerdere
-goedgekeurde zones bevatten.
+goedgekeurde zones bevatten. `./cyberbrein run` controleert dit read-only vóór interface-, GPS- en
+Collection-acties. Bij een bestaande ronde start geen nieuwe meting; open het dashboard en
+verwijder de ronde alleen wanneer de inzichtverstrekking is afgerond. Als Storage niet bereikbaar
+is, stopt dezelfde preflight eveneens zonder runtimebestanden te maken.
 
 ## Pipeline uitvoeren
 

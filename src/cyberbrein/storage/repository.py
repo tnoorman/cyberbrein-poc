@@ -205,6 +205,16 @@ class StorageRepository:
                 raise RuntimeError("PostGIS extension is required")
         metadata.create_all(self._engine)
 
+    def has_retained_measurement_round(self) -> bool:
+        """Return whether Storage already contains the single retained round."""
+        with self._engine.connect() as connection:
+            return (
+                connection.execute(
+                    select(measurement_rounds.c.measurement_round_id).limit(1)
+                ).scalar_one_or_none()
+                is not None
+            )
+
     def replace_measurement_round(
         self,
         measurement_round_id: str,

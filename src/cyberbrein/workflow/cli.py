@@ -18,6 +18,7 @@ from cyberbrein.pipeline.exit_codes import (
     UNUSABLE_SOURCE_EXIT as UNUSABLE_SOURCE_EXIT,
 )
 from cyberbrein.pipeline.runtime_config import RuntimeConfigurationError, load_approved_zones
+from cyberbrein.storage.repository import StorageRepository
 
 from .round_state import ROUND_ID_PATTERN as ROUND_ID_PATTERN
 from .round_state import RoundPaths
@@ -184,6 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         command_runner=_run,
         gps_check=_gps_quality_ready,
         monitor_check=_monitor_interface_ready,
+        retained_round_check=_retained_measurement_round_exists,
         event_handler=_render_workflow_event,
     )
     if args.command == "discard":
@@ -348,13 +350,41 @@ def _monitor_interface_ready(interface: str) -> bool:
     return False
 
 
+def _retained_measurement_round_exists(database_url: str) -> bool:
+    repository = StorageRepository(database_url)
+    try:
+        return repository.has_retained_measurement_round()
+    finally:
+        repository.close()
+
+
 def _render_workflow_event(event: WorkflowEvent) -> None:
     if event.name == "round_started":
         print(f"Meetronde gestart: {event.round_id}")
 
 
 def _render_outcome(outcome: RoundOutcome) -> int:
-    if outcome.guidance == "runtime_creation_failed":
+    if outcome.guidance == "retained_round_exists":
+        print(
+            "Workflow gestopt: Storage bevat nog een verwerkte meetronde.",
+            file=sys.stderr,
+        )
+        print(
+            "Verwijder deze pas nadat de inzichtverstrekking is afgerond via: "
+            "./cyberbrein dashboard",
+            file=sys.stderr,
+        )
+        print("Start daarna ./cyberbrein run opnieuw.", file=sys.stderr)
+    elif outcome.guidance == "storage_preflight_failed":
+        print(
+            "Workflow gestopt: PostgreSQL/PostGIS kon niet veilig worden gecontroleerd.",
+            file=sys.stderr,
+        )
+        print(
+            "Controleer de databaseservice en CYBERBREIN_DATABASE_URL voordat u opnieuw start.",
+            file=sys.stderr,
+        )
+    elif outcome.guidance == "runtime_creation_failed":
         print(
             f"Workflow kon veilige runtimebestanden niet maken: {outcome.detail}",
             file=sys.stderr,

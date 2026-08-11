@@ -6,7 +6,7 @@ from typing import Protocol
 from cyberbrein.ingestion.service import IngestionService
 from cyberbrein.processing.models import ApprovedZone, ProcessingPolicy, ScoredNetworkFinding
 from cyberbrein.processing.service import ProcessingService
-from cyberbrein.storage.repository import StorageRepository
+from cyberbrein.storage.repository import ActiveMeasurementRoundError, StorageRepository
 
 from .models import PipelineResult, PipelineRuntimeError
 
@@ -85,6 +85,12 @@ class PipelineService:
                 processing_result.findings,
             )
             stored_findings = storage.load_measurement_round(measurement_round_id)
+        except ActiveMeasurementRoundError as error:
+            try:
+                storage.close()
+            except Exception:
+                pass
+            raise PipelineRuntimeError("active_measurement_round_exists") from error
         except Exception as error:
             try:
                 storage.close()

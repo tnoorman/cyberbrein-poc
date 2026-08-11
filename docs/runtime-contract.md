@@ -19,6 +19,9 @@ dezelfde `main`-functie gebruiken.
 - Een meetronde-ID bevat uitsluitend letters, cijfers, punten, underscores en koppeltekens, begint
   met een alfanumeriek teken en is maximaal 128 tekens lang.
 - Interface- en GPS-preflight vinden plaats voordat runtimebestanden worden gemaakt.
+- `run` controleert daarvoor read-only of Storage al een verwerkte meetronde bevat. Bij een
+  bestaande ronde of een onbereikbare Storage stopt de workflow zonder Collection of
+  runtimebestanden te starten.
 - Bronbuffer en secret worden exclusief als mode `0600` gemaakt in private runtimedirectories.
 - Ruwe invoer wordt pas verwijderd nadat PostGIS-opslag is geverifieerd, of na een expliciet
   bevestigd `discard`.
@@ -26,6 +29,8 @@ dezelfde `main`-functie gebruiken.
   opgeruimd.
 - Ruwe BSSID, SSID, secret en precieze observatie-inhoud verschijnen niet in gebruikersmeldingen
   of het activiteitenlog.
+- Een bestaande verwerkte ronde wordt nooit automatisch door `run` verwijderd. De gebruiker
+  verwijdert deze pas na inzichtverstrekking via de bevestigde Operations-actie in het dashboard.
 
 ## Exitcodes
 

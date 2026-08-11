@@ -5,6 +5,11 @@ import pytest
 from cyberbrein.workflow import cli as workflow
 
 
+@pytest.fixture(autouse=True)
+def empty_processed_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(workflow, "_retained_measurement_round_exists", lambda _url: False)
+
+
 def _write_zone_file(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -65,6 +70,57 @@ def test_run_sequences_collection_pipeline_and_dashboard(
     assert commands[1][commands[1].index("--zones") + 1] == "data/local/test-round.zones.geojson"
     assert not (tmp_path / "data/local/test-round.zones.geojson").exists()
     assert not (tmp_path / "data/local/test-round.round.json").exists()
+
+
+def test_run_reports_retained_storage_before_device_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_zone_file(tmp_path / "data/local/zones.geojson")
+    monkeypatch.setenv("CYBERBREIN_INTERFACE", "wlan-test")
+    monkeypatch.setattr(workflow, "_retained_measurement_round_exists", lambda _url: True)
+    monkeypatch.setattr(
+        workflow,
+        "_monitor_interface_ready",
+        lambda _interface: pytest.fail("monitor check must not run"),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_gps_quality_ready",
+        lambda _accuracy: pytest.fail("GPS check must not run"),
+    )
+
+    assert workflow.main(["run", "--round-id", "blocked-round"]) == 2
+
+    error = capsys.readouterr().err
+    assert "Storage bevat nog een verwerkte meetronde" in error
+    assert "inzichtverstrekking" in error
+    assert "./cyberbrein dashboard" in error
+    assert not (tmp_path / "data/smoke/blocked-round.sqlite").exists()
+
+
+def test_run_reports_unavailable_storage_preflight_without_internal_detail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_zone_file(tmp_path / "data/local/zones.geojson")
+    monkeypatch.setenv("CYBERBREIN_INTERFACE", "wlan-test")
+
+    def unavailable(_url: str) -> bool:
+        raise RuntimeError("private database detail")
+
+    monkeypatch.setattr(workflow, "_retained_measurement_round_exists", unavailable)
+
+    assert workflow.main(["run", "--round-id", "database-down-round"]) == 2
+
+    error = capsys.readouterr().err
+    assert "PostgreSQL/PostGIS kon niet veilig worden gecontroleerd" in error
+    assert "private database detail" not in error
+    assert not (tmp_path / "data/smoke/database-down-round.sqlite").exists()
 
 
 def test_runtime_directory_symlink_is_rejected(
