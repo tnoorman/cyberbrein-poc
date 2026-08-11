@@ -154,3 +154,20 @@ def test_storage_factory_failure_is_reported_safely(tmp_path: Path) -> None:
     with pytest.raises(PipelineRuntimeError, match="storage_failed") as captured:
         _run(service, source)
     assert "internal storage detail" not in str(captured.value)
+
+
+def test_different_retained_round_has_specific_safe_category(
+    tmp_path: Path,
+    clean_postgis: str,
+) -> None:
+    source = tmp_path / "source.sqlite"
+    _write_source(source, [_raw_observation()])
+    repository = StorageRepository(clean_postgis)
+    try:
+        repository.initialize()
+        repository.replace_measurement_round("retained-round", [_zone()], [])
+    finally:
+        repository.close()
+
+    with pytest.raises(PipelineRuntimeError, match="active_measurement_round_exists"):
+        _run(PipelineService(), source, clean_postgis)

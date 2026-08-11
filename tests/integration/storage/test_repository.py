@@ -76,6 +76,15 @@ def test_round_trip_preserves_processed_contract(repository: StorageRepository) 
     assert stored_zone[0].geometry.equals(_zone().geometry)
 
 
+def test_retained_round_preflight_is_read_only(repository: StorageRepository) -> None:
+    assert repository.has_retained_measurement_round() is False
+
+    repository.replace_measurement_round("synthetic-round", [_zone()], [_scored_finding()])
+
+    assert repository.has_retained_measurement_round() is True
+    assert repository.load_measurement_round("synthetic-round") == (_scored_finding(),)
+
+
 def test_replacing_same_round_is_atomic(repository: StorageRepository) -> None:
     repository.replace_measurement_round("synthetic-round", [_zone()], [_scored_finding()])
     replacement = _scored_finding(network_id="replacement-network")

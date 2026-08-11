@@ -49,6 +49,7 @@ def test_run_uses_injected_boundaries_and_emits_start_event(
         command_runner=run_command,
         gps_check=lambda accuracy: accuracy == 15.0,
         monitor_check=lambda interface: interface == "wlan-test",
+        retained_round_check=lambda _url: False,
         event_handler=events.append,
     )
 
@@ -71,11 +72,55 @@ def test_failed_preflight_does_not_create_runtime_inputs(
         command_runner=lambda *_args: pytest.fail("command must not run"),
         gps_check=lambda _accuracy: pytest.fail("GPS must follow monitor preflight"),
         monitor_check=lambda _interface: False,
+        retained_round_check=lambda _url: False,
     )
 
     outcome = service.run(_run_request(tmp_path))
 
     assert outcome.exit_code == 2
+    assert not (tmp_path / "data").exists()
+
+
+def test_retained_storage_round_stops_before_device_preflights_and_runtime_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    service = WorkflowService(
+        command_runner=lambda *_args: pytest.fail("command must not run"),
+        gps_check=lambda _accuracy: pytest.fail("GPS must not run"),
+        monitor_check=lambda _interface: pytest.fail("monitor check must not run"),
+        retained_round_check=lambda url: url.endswith("/test"),
+    )
+
+    outcome = service.run(_run_request(tmp_path))
+
+    assert outcome.exit_code == 2
+    assert outcome.guidance == "retained_round_exists"
+    assert not (tmp_path / "data").exists()
+
+
+def test_unavailable_storage_preflight_fails_closed_before_runtime_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def unavailable(_url: str) -> bool:
+        raise RuntimeError("private database detail")
+
+    service = WorkflowService(
+        command_runner=lambda *_args: pytest.fail("command must not run"),
+        gps_check=lambda _accuracy: pytest.fail("GPS must not run"),
+        monitor_check=lambda _interface: pytest.fail("monitor check must not run"),
+        retained_round_check=unavailable,
+    )
+
+    outcome = service.run(_run_request(tmp_path))
+
+    assert outcome.exit_code == 2
+    assert outcome.guidance == "storage_preflight_failed"
+    assert outcome.detail is None
     assert not (tmp_path / "data").exists()
 
 
@@ -101,6 +146,7 @@ def test_resume_invokes_pipeline_without_collection(
         command_runner=run_command,
         gps_check=lambda _accuracy: True,
         monitor_check=lambda _interface: True,
+        retained_round_check=lambda _url: False,
     )
     outcome = service.resume(
         ResumeRequest(
@@ -136,6 +182,7 @@ def test_resume_uses_pinned_policy_after_original_zone_file_changes(
         command_runner=interrupt_collection,
         gps_check=lambda _accuracy: True,
         monitor_check=lambda _interface: True,
+        retained_round_check=lambda _url: False,
     )
     assert service.run(_run_request(tmp_path)).exit_code == 2
     paths = RoundPaths.for_round("service-round")
@@ -153,6 +200,7 @@ def test_resume_uses_pinned_policy_after_original_zone_file_changes(
         command_runner=fail_pipeline,
         gps_check=lambda _accuracy: True,
         monitor_check=lambda _interface: True,
+        retained_round_check=lambda _url: False,
     ).resume(
         ResumeRequest(
             round_id="service-round",
@@ -186,6 +234,7 @@ def test_pinned_round_rejects_explicit_policy_override(
         command_runner=interrupt_collection,
         gps_check=lambda _accuracy: True,
         monitor_check=lambda _interface: True,
+        retained_round_check=lambda _url: False,
     )
     assert service.run(_run_request(tmp_path)).exit_code == 2
 
@@ -220,6 +269,7 @@ def test_corrupt_zone_snapshot_fails_closed(
         command_runner=interrupt_collection,
         gps_check=lambda _accuracy: True,
         monitor_check=lambda _interface: True,
+        retained_round_check=lambda _url: False,
     )
     assert service.run(_run_request(tmp_path)).exit_code == 2
     RoundPaths.for_round("service-round").zones_snapshot.write_bytes(b"swapped")
@@ -257,6 +307,7 @@ def test_stored_uncleaned_round_cannot_resume_and_can_be_discarded(
         command_runner=incomplete_cleanup,
         gps_check=lambda _accuracy: True,
         monitor_check=lambda _interface: True,
+        retained_round_check=lambda _url: False,
     )
     assert service.run(_run_request(tmp_path)).exit_code == CLEANUP_EXIT
     assert RoundStateStore().load("service-round").state is RoundState.STORED_UNCLEANED
@@ -297,6 +348,7 @@ def test_active_round_with_missing_preserved_input_fails_before_pipeline(
         command_runner=interrupt_collection,
         gps_check=lambda _accuracy: True,
         monitor_check=lambda _interface: True,
+        retained_round_check=lambda _url: False,
     )
     assert service.run(_run_request(tmp_path)).exit_code == 2
     RoundPaths.for_round("service-round").secret.unlink()
