@@ -59,3 +59,16 @@ veilig herstel en de afzonderlijke onderliggende commando's. Zie
 [`docs/phase-04-presentation-runbook.md`](docs/phase-04-presentation-runbook.md) voor gebruik,
 PDF-export en veilige controles. De actuele technische afrondingscontrole staat in
 [`docs/phase-07-defence-readiness-acceptatieresultaten.md`](docs/phase-07-defence-readiness-acceptatieresultaten.md).
+
+
+## License
+
+Cyberbrein Exposure PoC is licensed under the
+Apache License, Version 2.0.
+
+See the [LICENSE](LICENSE) file for details.
+
+Developed for Stichting Cyberbrein, a Dutch nonprofit
+organization dedicated to cybersecurity awareness
+and digital resilience.
+
